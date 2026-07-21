@@ -5,7 +5,8 @@ import { eq, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { db } from "@/db";
-import { examples, lineageNodes, moderators, soundChanges, transitions } from "@/db/schema";
+import { revalidateCatalog } from "@/db/queries";
+import { examples, lineageNodes, moderators, soundChanges, sources, transitionSources, transitions } from "@/db/schema";
 import { applyModeratorOperations } from "@/lib/apply-proposal";
 import { authenticate, createSession, destroySession, passwordHash, requireModerator } from "@/lib/auth";
 import { parseOperations } from "@/lib/proposals";
@@ -49,6 +50,7 @@ export async function directEditAction(formData: FormData) {
     throw new Error("The edit must be valid JSON matching a supported operation.");
   }
   await applyModeratorOperations(operations, moderator.id, summary);
+  revalidateCatalog();
   revalidatePath("/"); revalidatePath("/browse"); revalidatePath("/search"); revalidatePath("/history");
   redirect("/moderation");
 }
@@ -88,6 +90,7 @@ export async function inlineEditAction(formData: FormData) {
       await tx.insert((await import("@/db/schema")).revisionEvents).values({ moderatorId: moderator.id, entityType: "rule", entityId: id, action: "update", summary, beforeSnapshot: before, afterSnapshot: after });
     } else throw new Error("Unknown editor target.");
   });
+  revalidateCatalog();
   revalidatePath("/browse");
   revalidatePath("/search");
 }
@@ -105,6 +108,7 @@ export async function editPairAction(formData: FormData) {
   const comments = formData.getAll("comment").map(String);
   const exampleLists = formData.getAll("examples").map(String);
   const ids = formData.getAll("ruleId").map(String);
+  const sourceCitation = String(formData.get("sourceCitation") ?? "").trim().normalize("NFC");
   const originalRules = new Map(formData.getAll("originalRule").map(String).map(parseRuleSnapshot).map((rule) => [rule.id, rule]));
   if (!transitionId || !Number.isInteger(transitionRevision) || inputs.some((value, index) => !value.trim() || !outputs[index]?.trim())) throw new Error("Every sound change needs a proto-sound and resulting sound.");
   await db.transaction(async (tx) => {
@@ -115,6 +119,7 @@ export async function editPairAction(formData: FormData) {
     const [transition] = await tx.select().from(transitions).where(eq(transitions.id, transitionId));
     if (!transition) throw new Error("This language pair no longer exists.");
     const existing = await tx.select().from(soundChanges).where(eq(soundChanges.transitionId, transitionId));
+    const existingSources = await tx.select({ displayCitation: sources.displayCitation }).from(transitionSources).innerJoin(sources, eq(transitionSources.sourceId, sources.id)).where(eq(transitionSources.transitionId, transitionId));
     const submittedIds = new Set(ids.filter(Boolean));
     let changed = false;
     for (const rule of existing) {
@@ -133,7 +138,7 @@ export async function editPairAction(formData: FormData) {
         const original = originalRules.get(ruleId);
         if (!before || !original) throw new Error("A sound change no longer exists.");
         const currentWords = await ruleWords(tx, ruleId);
-        const merged = mergeRuleEdit(before, currentWords, original, submitted);
+        const merged = mergeRuleEdit(before, currentWords, original, submitted, index);
         if (merged.data) {
           await tx.update(soundChanges).set({ ...merged.data, revision: sql`${soundChanges.revision} + 1`, updatedAt: new Date() }).where(eq(soundChanges.id, ruleId));
           changed = true;
@@ -150,11 +155,20 @@ export async function editPairAction(formData: FormData) {
         changed = true;
       }
     }
+    if (sourceCitation !== (existingSources[0]?.displayCitation ?? "")) {
+      await tx.delete(transitionSources).where(eq(transitionSources.transitionId, transitionId));
+      if (sourceCitation) {
+        const [source] = await tx.insert(sources).values({ displayCitation: sourceCitation }).returning();
+        await tx.insert(transitionSources).values({ transitionId, sourceId: source.id });
+      }
+      changed = true;
+    }
     if (changed) {
       await tx.update(transitions).set({ revision: sql`${transitions.revision} + 1`, updatedAt: new Date() }).where(eq(transitions.id, transitionId));
-      await tx.insert((await import("@/db/schema")).revisionEvents).values({ moderatorId: moderator.id, entityType: "transition", entityId: transitionId, action: "update_rules", summary, beforeSnapshot: { ruleCount: existing.length }, afterSnapshot: { ruleCount: inputs.length } });
+      await tx.insert((await import("@/db/schema")).revisionEvents).values({ moderatorId: moderator.id, entityType: "transition", entityId: transitionId, action: "update_rules", summary, beforeSnapshot: { ruleCount: existing.length, sourceCitation: existingSources[0]?.displayCitation ?? "" }, afterSnapshot: { ruleCount: inputs.length, sourceCitation } });
     }
   });
+  revalidateCatalog();
   revalidatePath("/browse"); revalidatePath("/search");
 }
 
@@ -190,7 +204,7 @@ function ruleData(rule: SubmittedRule, sortOrder: number, explanation: string) {
   return { input: rule.input, output: rule.output, environment: rule.environment, exceptions: rule.exceptions, exceptionExamples: rule.exceptionExamples, qualifier: rule.qualifier, explanation, displayNotation: composeRule(rule.input, rule.output, rule.environment, rule.qualifier, rule.exceptions), sortOrder };
 }
 
-function mergeRuleEdit(current: typeof soundChanges.$inferSelect, currentWords: string[], original: RuleSnapshot, submitted: SubmittedRule) {
+function mergeRuleEdit(current: typeof soundChanges.$inferSelect, currentWords: string[], original: RuleSnapshot, submitted: SubmittedRule, sortOrder: number) {
   const originalData: SubmittedRule = { input: original.input, output: original.output, environment: original.environment, exceptions: original.exceptions, qualifier: original.comment, exceptionExamples: wordsFrom(original.exceptionExamples), words: wordsFrom(original.examples) };
   const merged: SubmittedRule = { input: current.input, output: current.output, environment: current.environment, exceptions: current.exceptions, qualifier: current.qualifier, exceptionExamples: current.exceptionExamples, words: currentWords };
   for (const key of ["input", "output", "environment", "exceptions", "qualifier", "exceptionExamples"] as const) {
@@ -202,8 +216,8 @@ function mergeRuleEdit(current: typeof soundChanges.$inferSelect, currentWords: 
   const oursChangedWords = !sameWords(submitted.words, originalData.words);
   const theirsChangedWords = !sameWords(currentWords, originalData.words);
   if (oursChangedWords && theirsChangedWords && !sameWords(submitted.words, currentWords)) throw new Error("This sound change has conflicting example edits. Refresh and resolve them.");
-  const data = ruleData(merged, current.sortOrder, current.explanation);
-  const dataChanged = current.input !== data.input || current.output !== data.output || current.environment !== data.environment || current.exceptions !== data.exceptions || !sameWords(current.exceptionExamples, data.exceptionExamples) || current.qualifier !== data.qualifier || current.displayNotation !== data.displayNotation;
+  const data = ruleData(merged, sortOrder, current.explanation);
+  const dataChanged = current.input !== data.input || current.output !== data.output || current.environment !== data.environment || current.exceptions !== data.exceptions || !sameWords(current.exceptionExamples, data.exceptionExamples) || current.qualifier !== data.qualifier || current.displayNotation !== data.displayNotation || current.sortOrder !== data.sortOrder;
   return { data: dataChanged ? data : null, words: oursChangedWords ? submitted.words : null };
 }
 
@@ -216,6 +230,7 @@ export async function movePairAction(formData: FormData) {
   if (index < 0 || swapIndex < 0 || swapIndex >= list.length) return;
   [list[index], list[swapIndex]] = [list[swapIndex], list[index]];
   await db.transaction(async (tx) => { for (const [order, entry] of list.entries()) await tx.update(transitions).set({ sortOrder: order, updatedAt: new Date() }).where(eq(transitions.id, entry.id)); });
+  revalidateCatalog();
   revalidatePath("/browse");
 }
 
@@ -230,6 +245,7 @@ export async function deletePairAction(formData: FormData) {
     await tx.insert((await import("@/db/schema")).revisionEvents).values({ moderatorId: moderator.id, entityType: "transition", entityId: id, action: "delete", summary: "Deleted language pair", beforeSnapshot: before });
   });
   await pruneUnusedStages();
+  revalidateCatalog();
   revalidatePath("/browse"); revalidatePath("/search");
 }
 
@@ -245,6 +261,7 @@ export async function addPairAction(formData: FormData) {
   const title = `${source.name} to ${target.name}`; const slug = `${slugify(title)}-${Date.now().toString(36)}`;
   const [after] = await db.insert(transitions).values({ sourceNodeId: source.id, targetNodeId: target.id, title, slug, sortOrder: (await db.select({ sortOrder: transitions.sortOrder }).from(transitions)).length }).returning();
   await db.insert((await import("@/db/schema")).revisionEvents).values({ moderatorId: moderator.id, entityType: "transition", entityId: after.id, action: "create", summary: "Added language pair", afterSnapshot: after });
+  revalidateCatalog();
   revalidatePath("/browse"); revalidatePath("/search");
 }
 

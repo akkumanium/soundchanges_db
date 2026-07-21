@@ -11,14 +11,23 @@ export function PairEditor({ entry }: { entry: CatalogTransition }) {
   const [, startMove] = useTransition();
   const [rows, setRows] = useState<Row[]>(() => entry.rules.map((rule) => ({ id: rule.id, revision: rule.revision, input: rule.input, output: rule.output, environment: rule.environment, exceptions: rule.exceptions, exceptionExamples: rule.exceptionExamples.join(", "), comment: rule.qualifier, examples: rule.examples.map((example) => example.targetForm).join(", ") })));
   const add = () => setRows((current) => [...current, { id: "", revision: 0, input: "", output: "", environment: "", exceptions: "", exceptionExamples: "", comment: "", examples: "" }]);
+  const moveRule = (index: number, direction: "up" | "down") => setRows((current) => {
+    const target = index + (direction === "up" ? -1 : 1);
+    if (target < 0 || target >= current.length) return current;
+    const reordered = [...current];
+    [reordered[index], reordered[target]] = [reordered[target], reordered[index]];
+    return reordered;
+  });
   const move = (direction: "up" | "down") => startMove(() => { const data = new FormData(); data.set("transitionId", entry.id); data.set("direction", direction); return movePairAction(data); });
   const removePair = () => { if (!window.confirm(`Delete “${entry.title}” and all of its sound changes? This cannot be undone.`)) return; startMove(() => { const data = new FormData(); data.set("transitionId", entry.id); return deletePairAction(data); }); };
   if (!editing) return <button type="button" className="pair-edit" onClick={() => setEditing(true)} aria-label={`Edit ${entry.title}`}>✏️</button>;
   return <form action={editPairAction} className="pair-editor"><input type="hidden" name="transitionId" value={entry.id} /><input type="hidden" name="transitionRevision" value={entry.revision} />
     {entry.rules.map((rule) => <input key={rule.id} type="hidden" name="originalRule" value={JSON.stringify(ruleSnapshot(rule))} />)}
     <div className="pair-editor__move"><span>Pair order</span><button type="button" onClick={() => move("up")}>↑</button><button type="button" onClick={() => move("down")}>↓</button></div>
+    <label className="pair-editor__source">Source citation<input name="sourceCitation" defaultValue={entry.sources[0]?.displayCitation ?? ""} placeholder="Author, year, title" /></label>
     <div className="pair-editor__rows">{rows.map((row, index) => <div className="rule-fields" key={`${row.id}-${index}`}>
       <input type="hidden" name="ruleId" value={row.id} /><input type="hidden" name="ruleRevision" value={row.revision} />
+      <div className="rule-fields__order" aria-label={`Move sound change ${index + 1}`}><button type="button" onClick={() => moveRule(index, "up")} disabled={index === 0} aria-label="Move sound change up">↑</button><button type="button" onClick={() => moveRule(index, "down")} disabled={index === rows.length - 1} aria-label="Move sound change down">↓</button></div>
       <input name="input" aria-label="Proto sound" required value={row.input} onChange={(event) => update(index, "input", event.target.value, setRows)} placeholder="p" /><span>→</span><input name="output" aria-label="Resulting sound" required value={row.output} onChange={(event) => update(index, "output", event.target.value, setRows)} placeholder="f" />
       <span>/</span><input name="environment" aria-label="Environment" value={row.environment} onChange={(event) => update(index, "environment", event.target.value, setRows)} placeholder="V_V" /><span>/ !</span><input name="exceptions" aria-label="Exceptions" value={row.exceptions} onChange={(event) => update(index, "exceptions", event.target.value, setRows)} placeholder="exceptions" />
       <span>/</span><input name="exceptionExamples" aria-label="Exception examples" value={row.exceptionExamples} onChange={(event) => update(index, "exceptionExamples", event.target.value, setRows)} placeholder="exception words" /><span>/</span><input name="comment" aria-label="Comment" value={row.comment} onChange={(event) => update(index, "comment", event.target.value, setRows)} placeholder="comment" /><span>/</span><input name="examples" aria-label="Examples" value={row.examples} onChange={(event) => update(index, "examples", event.target.value, setRows)} placeholder="examples, comma-separated" />

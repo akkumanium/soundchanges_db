@@ -1,4 +1,5 @@
 import { and, asc, desc, eq } from "drizzle-orm";
+import { revalidateTag, unstable_cache } from "next/cache";
 import { connection } from "next/server";
 import { db } from "./index";
 import {
@@ -38,9 +39,12 @@ export type Catalog = {
   databaseAvailable: boolean;
 };
 
-export async function getCatalog(): Promise<Catalog> {
-  await connection();
-  try {
+const CATALOG_CACHE_TAG = "catalog";
+
+// Public pages all use this same, fully-hydrated catalogue. Cache it once instead
+// of issuing seven full-table reads for every visitor.
+const loadCachedCatalog = unstable_cache(
+  async (): Promise<Catalog> => {
     const [nodeRows, transitionRows, ruleRows, exampleRows, sourceRows, transitionSourceRows, changeSourceRows] = await Promise.all([
       db.select().from(lineageNodes).orderBy(asc(lineageNodes.sortOrder), asc(lineageNodes.name)),
       db.select().from(transitions).orderBy(asc(transitions.sortOrder), asc(transitions.title)),
@@ -105,10 +109,23 @@ export async function getCatalog(): Promise<Catalog> {
       demo: [...nodeRows, ...transitionRows, ...sourceRows].some((record) => record.isDemo),
       databaseAvailable: true,
     };
+  },
+  ["catalog"],
+  { revalidate: 3600, tags: [CATALOG_CACHE_TAG] },
+);
+
+export async function getCatalog(): Promise<Catalog> {
+  await connection();
+  try {
+    return await loadCachedCatalog();
   } catch (error) {
     console.error(JSON.stringify({ level: "error", event: "catalog_query_failed", message: error instanceof Error ? error.message : "Unknown error" }));
     return { roots: [], nodes: [], transitions: [], demo: false, databaseAvailable: false };
   }
+}
+
+export function revalidateCatalog(): void {
+  revalidateTag(CATALOG_CACHE_TAG, "max");
 }
 
 export async function getTransitionBySlug(slug: string): Promise<CatalogTransition | undefined> {
