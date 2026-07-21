@@ -1,0 +1,27 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1784634216156,
+      "tag": "0000_awesome_vertigo",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1784651000000,
+      "tag": "0001_remove_public_submissions",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1785340000000,
+      "tag": "0002_add_exception_examples",
+      "breakpoints": true
+    }
+  ]
+}

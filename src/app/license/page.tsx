@@ -1,0 +1,3 @@
+export default function LicensePage() {
+  return <div className="page-shell content-page"><p className="eyebrow">Licensing</p><h1>Open code, open data</h1><h2>Software</h2><p>The application source code is licensed under the GNU Affero General Public License, version 3 only (AGPL-3.0-only). Operators of modified network versions must make the corresponding source available as required by that license.</p><h2>Database content</h2><p>Published linguistic records and editorial text are licensed under Creative Commons Attribution-ShareAlike 4.0 International (CC BY-SA 4.0). Reusers must provide attribution, identify changes, and share adaptations under the same license.</p></div>;
+}

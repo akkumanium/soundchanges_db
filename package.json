@@ -1,0 +1,45 @@
+{
+  "name": "casc",
+  "version": "0.1.0",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "node --env-file-if-exists=.env --import tsx scripts/migrate.ts",
+    "db:check": "node --env-file-if-exists=.env --import tsx scripts/check-db.ts",
+    "db:seed:demo": "node --env-file-if-exists=.env --import tsx scripts/seed-demo.ts",
+    "db:grant-local": "tsx scripts/grant-db-access.ts",
+    "admin:create": "node --env-file-if-exists=.env --import tsx scripts/create-admin.ts",
+    "maintenance:purge": "node --env-file-if-exists=.env --import tsx scripts/purge-private-data.ts"
+  },
+  "dependencies": {
+    "@node-rs/argon2": "latest",
+    "drizzle-orm": "latest",
+    "next": "latest",
+    "postgres": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "zod": "latest"
+  },
+  "devDependencies": {
+    "@playwright/test": "latest",
+    "@types/node": "^24.0.0",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "drizzle-kit": "latest",
+    "eslint": "^9.0.0",
+    "eslint-config-next": "latest",
+    "tsx": "latest",
+    "typescript": "^5.9.0",
+    "vitest": "latest"
+  },
+  "packageManager": "pnpm@10.33.0"
+}
