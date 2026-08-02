@@ -4,13 +4,13 @@ import { useState, useTransition } from "react";
 import type { CatalogNode, CatalogTransition } from "@/db/queries";
 import { deletePairAction, editPairAction, movePairAction } from "@/app/moderation/actions";
 
-type Row = { id: string; revision: number; input: string; output: string; environment: string; exceptions: string; exceptionExamples: string; comment: string; examples: string };
-type RuleSnapshot = Omit<Row, "revision"> & { explanation: string };
-export function PairEditor({ entry, nodes }: { entry: CatalogTransition; nodes: CatalogNode[] }) {
+type Row = { id: string; revision: number; approvalStatus: "pending" | "approved" | "rejected"; input: string; output: string; environment: string; exceptions: string; exceptionExamples: string; comment: string; examples: string };
+type RuleSnapshot = Omit<Row, "revision" | "approvalStatus"> & { explanation: string };
+export function PairEditor({ entry, nodes, canDeleteApproved = false }: { entry: CatalogTransition; nodes: CatalogNode[]; canDeleteApproved?: boolean }) {
   const [editing, setEditing] = useState(false);
   const [, startMove] = useTransition();
-  const [rows, setRows] = useState<Row[]>(() => entry.rules.map((rule) => ({ id: rule.id, revision: rule.revision, input: rule.input, output: rule.output, environment: rule.environment, exceptions: rule.exceptions, exceptionExamples: rule.exceptionExamples.join(", "), comment: rule.qualifier, examples: rule.examples.map((example) => example.targetForm).join(", ") })));
-  const add = () => setRows((current) => [...current, { id: "", revision: 0, input: "", output: "", environment: "", exceptions: "", exceptionExamples: "", comment: "", examples: "" }]);
+  const [rows, setRows] = useState<Row[]>(() => entry.rules.map((rule) => ({ id: rule.id, revision: rule.revision, approvalStatus: rule.approvalStatus, input: rule.input, output: rule.output, environment: rule.environment, exceptions: rule.exceptions, exceptionExamples: rule.exceptionExamples.join(", "), comment: rule.qualifier, examples: rule.examples.map((example) => example.targetForm).join(", ") })));
+  const add = () => setRows((current) => [...current, { id: "", revision: 0, approvalStatus: "pending", input: "", output: "", environment: "", exceptions: "", exceptionExamples: "", comment: "", examples: "" }]);
   const moveRule = (index: number, direction: "up" | "down") => setRows((current) => {
     const target = index + (direction === "up" ? -1 : 1);
     if (target < 0 || target >= current.length) return current;
@@ -20,6 +20,7 @@ export function PairEditor({ entry, nodes }: { entry: CatalogTransition; nodes: 
   });
   const move = (direction: "up" | "down") => startMove(() => { const data = new FormData(); data.set("transitionId", entry.id); data.set("direction", direction); return movePairAction(data); });
   const removePair = () => { if (!window.confirm(`Delete “${entry.title}” and all of its sound changes? This cannot be undone.`)) return; startMove(() => { const data = new FormData(); data.set("transitionId", entry.id); return deletePairAction(data); }); };
+  const canDeletePair = canDeleteApproved || ((entry.sourceApprovalStatus === "pending" || entry.targetApprovalStatus === "pending") && entry.rules.every((rule) => rule.approvalStatus === "pending"));
   if (!editing) return <button type="button" className="pair-edit" onClick={() => setEditing(true)} aria-label={`Edit ${entry.title}`}>✏️</button>;
   const languageListId = `languages-${entry.id}`;
   return <form action={editPairAction} className="pair-editor"><input type="hidden" name="transitionId" value={entry.id} /><input type="hidden" name="transitionRevision" value={entry.revision} />
@@ -33,9 +34,9 @@ export function PairEditor({ entry, nodes }: { entry: CatalogTransition; nodes: 
       <input name="input" aria-label="Proto sound" required value={row.input} onChange={(event) => update(index, "input", event.target.value, setRows)} placeholder="p" /><span>→</span><input name="output" aria-label="Resulting sound" required value={row.output} onChange={(event) => update(index, "output", event.target.value, setRows)} placeholder="f" />
       <span>/</span><input name="environment" aria-label="Environment" value={row.environment} onChange={(event) => update(index, "environment", event.target.value, setRows)} placeholder="V_V" /><span>/ !</span><input name="exceptions" aria-label="Exceptions" value={row.exceptions} onChange={(event) => update(index, "exceptions", event.target.value, setRows)} placeholder="exceptions" />
       <span>/</span><input name="exceptionExamples" aria-label="Exception examples" value={row.exceptionExamples} onChange={(event) => update(index, "exceptionExamples", event.target.value, setRows)} placeholder="exception words" /><span>/</span><input name="comment" aria-label="Comment" value={row.comment} onChange={(event) => update(index, "comment", event.target.value, setRows)} placeholder="comment" /><span>/</span><input name="examples" aria-label="Examples" value={row.examples} onChange={(event) => update(index, "examples", event.target.value, setRows)} placeholder="examples, comma-separated" />
-      <button type="button" className="remove-rule" onClick={() => { if (window.confirm("Remove this sound change? This cannot be undone after saving.")) setRows((current) => current.filter((_, rowIndex) => rowIndex !== index)); }} aria-label="Remove sound change">×</button>
+      {(canDeleteApproved || !row.id || row.approvalStatus === "pending") && <button type="button" className="remove-rule" onClick={() => { if (window.confirm("Remove this sound change? This cannot be undone after saving.")) setRows((current) => current.filter((_, rowIndex) => rowIndex !== index)); }} aria-label="Remove sound change">×</button>}
     </div>)}</div>
-    <div className="pair-editor__actions"><button type="button" className="add-rule" onClick={add}>+</button><button type="submit">Save</button><button type="button" className="cancel-edit" onClick={() => setEditing(false)}>Cancel</button><button type="button" className="delete-pair" onClick={removePair}>Delete pair</button></div>
+    <div className="pair-editor__actions"><button type="button" className="add-rule" onClick={add}>+</button><button type="submit">Save</button><button type="button" className="cancel-edit" onClick={() => setEditing(false)}>Cancel</button>{canDeletePair && <button type="button" className="delete-pair" onClick={removePair}>Delete pair</button>}</div>
   </form>;
 }
 function update(index: number, key: keyof Row, value: string, setRows: React.Dispatch<React.SetStateAction<Row[]>>) { setRows((rows) => rows.map((row, rowIndex) => rowIndex === index ? { ...row, [key]: value } : row)); }

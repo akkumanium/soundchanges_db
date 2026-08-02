@@ -27,7 +27,7 @@ export async function applyModeratorOperations(operations: ProposalOperation[], 
     if (conflict) throw new Error(conflict);
     const events: Event[] = [];
     for (const operation of operations) {
-      if (operation.type !== "editorial_request") events.push(...await applyOperation(tx, operation, requiresReview ? moderatorId : null));
+      if (operation.type !== "editorial_request") events.push(...await applyOperation(tx, operation, requiresReview ? moderatorId : null, !requiresReview));
     }
     for (const event of events) {
       await tx.insert(revisionEvents).values({
@@ -55,7 +55,7 @@ async function findConflict(tx: Transaction, operations: ProposalOperation[]): P
   return null;
 }
 
-async function applyOperation(tx: Transaction, operation: Exclude<ProposalOperation, { type: "editorial_request" }>, submittedBy: string | null): Promise<Event[]> {
+async function applyOperation(tx: Transaction, operation: Exclude<ProposalOperation, { type: "editorial_request" }>, submittedBy: string | null, canDeleteApproved: boolean): Promise<Event[]> {
   if (operation.type === "create_lineage") {
     if (operation.data.parentId) await assertNodeExists(tx, operation.data.parentId);
     const [after] = await tx.insert(lineageNodes).values({ ...operation.data, parentId: operation.data.parentId || null, aliases: [], approvalStatus: submittedBy ? "pending" : "approved", submittedBy }).returning();
@@ -72,6 +72,7 @@ async function applyOperation(tx: Transaction, operation: Exclude<ProposalOperat
   }
   if (operation.type === "delete_lineage") {
     const [before] = await tx.select().from(lineageNodes).where(eq(lineageNodes.id, operation.id)).limit(1);
+    if (!canDeleteApproved && before.approvalStatus !== "pending") throw new Error("Only administrators can delete approved languages or stages.");
     await tx.delete(lineageNodes).where(eq(lineageNodes.id, operation.id));
     return [event("lineage", before.id, "delete", before, null)];
   }
@@ -96,6 +97,11 @@ async function applyOperation(tx: Transaction, operation: Exclude<ProposalOperat
   }
   if (operation.type === "delete_transition") {
     const [before] = await tx.select().from(transitions).where(eq(transitions.id, operation.id)).limit(1);
+    if (!canDeleteApproved) {
+      const [nodes, rules] = await Promise.all([tx.select().from(lineageNodes), tx.select().from(soundChanges).where(eq(soundChanges.transitionId, operation.id))]);
+      const hasPendingLanguage = [before.sourceNodeId, before.targetNodeId].some((id) => nodes.find((node) => node.id === id)?.approvalStatus === "pending");
+      if (!hasPendingLanguage || rules.some((rule) => rule.approvalStatus !== "pending")) throw new Error("Only administrators can delete approved language pairs or pairs containing approved sound changes.");
+    }
     await tx.delete(transitions).where(eq(transitions.id, operation.id));
     return [event("transition", before.id, "delete", before, null)];
   }
@@ -110,6 +116,7 @@ async function applyOperation(tx: Transaction, operation: Exclude<ProposalOperat
   }
   if (operation.type === "delete_rule") {
     const [before] = await tx.select().from(soundChanges).where(eq(soundChanges.id, operation.id)).limit(1);
+    if (!canDeleteApproved && before.approvalStatus !== "pending") throw new Error("Only administrators can delete approved sound changes.");
     await tx.delete(soundChanges).where(eq(soundChanges.id, operation.id));
     return [event("rule", before.id, "delete", before, null)];
   }
@@ -123,6 +130,7 @@ async function applyOperation(tx: Transaction, operation: Exclude<ProposalOperat
     return [event("example", after.id, "update", before, after)];
   }
   if (operation.type === "delete_example") {
+    if (!canDeleteApproved) throw new Error("Only administrators can delete approved examples.");
     const [before] = await tx.select().from(examples).where(eq(examples.id, operation.id)).limit(1);
     await tx.delete(examples).where(eq(examples.id, operation.id));
     return [event("example", before.id, "delete", before, null)];

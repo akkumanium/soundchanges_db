@@ -137,6 +137,7 @@ export async function editPairAction(formData: FormData) {
     let changed = false;
     for (const rule of existing) {
       if (!submittedIds.has(rule.id)) {
+        if (moderator.role !== "admin" && rule.approvalStatus !== "pending") throw new Error("Only administrators can delete approved sound changes.");
         const original = originalRules.get(rule.id);
         if (!original || !sameRuleSnapshot(rule, await ruleWords(tx, rule.id), original)) throw new Error("This sound change was changed by someone else. Refresh and resolve the conflicting deletion.");
         await tx.delete(soundChanges).where(eq(soundChanges.id, rule.id));
@@ -254,10 +255,15 @@ export async function deletePairAction(formData: FormData) {
   await db.transaction(async (tx) => {
     const [before] = await tx.select().from(transitions).where(eq(transitions.id, id));
     if (!before) throw new Error("This language pair no longer exists.");
+    if (moderator.role !== "admin") {
+      const [nodes, rules] = await Promise.all([tx.select().from(lineageNodes), tx.select().from(soundChanges).where(eq(soundChanges.transitionId, id))]);
+      const hasPendingLanguage = [before.sourceNodeId, before.targetNodeId].some((nodeId) => nodes.find((node) => node.id === nodeId)?.approvalStatus === "pending");
+      if (!hasPendingLanguage || rules.some((rule) => rule.approvalStatus !== "pending")) throw new Error("Only administrators can delete approved language pairs or pairs containing approved sound changes.");
+    }
     await tx.delete(transitions).where(eq(transitions.id, id));
     await tx.insert((await import("@/db/schema")).revisionEvents).values({ moderatorId: moderator.id, entityType: "transition", entityId: id, action: "delete", summary: "Deleted language pair", beforeSnapshot: before });
   });
-  await pruneUnusedStages();
+  await pruneUnusedStages(moderator.role !== "admin");
   revalidateCatalog();
   revalidatePath("/browse"); revalidatePath("/search");
 }
@@ -267,7 +273,7 @@ export async function addPairAction(formData: FormData) {
   const sourceName = String(formData.get("sourceName") ?? "").trim().normalize("NFC"); const targetName = String(formData.get("targetName") ?? "").trim().normalize("NFC");
   if (!sourceName || !targetName || sourceName === targetName) throw new Error("Enter two different language or stage names.");
   const existingPairs = await db.select({ id: transitions.id }).from(transitions);
-  if (existingPairs.length === 0) await pruneUnusedStages();
+  if (existingPairs.length === 0) await pruneUnusedStages(moderator.role !== "admin");
   await db.transaction(async (tx) => {
     const sourceResult = await findOrCreateNodeInTransaction(tx, sourceName, moderator);
     const targetResult = await findOrCreateNodeInTransaction(tx, targetName, moderator);
@@ -303,11 +309,11 @@ async function placeStagesForPairInTransaction(tx: Parameters<Parameters<typeof 
 }
 
 /** Nodes are only useful while a pair refers to them; remove abandoned hierarchy after deletion. */
-async function pruneUnusedStages() {
+async function pruneUnusedStages(onlyPending = false) {
   while (true) {
     const [nodes, pairs] = await Promise.all([db.select().from(lineageNodes), db.select().from(transitions)]);
     const used = new Set(pairs.flatMap((pair) => [pair.sourceNodeId, pair.targetNodeId]));
-    const removable = nodes.filter((node) => !used.has(node.id) && !nodes.some((candidate) => candidate.parentId === node.id));
+    const removable = nodes.filter((node) => (!onlyPending || node.approvalStatus === "pending") && !used.has(node.id) && !nodes.some((candidate) => candidate.parentId === node.id));
     if (removable.length === 0) return;
     for (const node of removable) await db.delete(lineageNodes).where(eq(lineageNodes.id, node.id));
   }

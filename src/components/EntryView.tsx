@@ -1,12 +1,12 @@
 import type { CatalogExample, CatalogNode, CatalogRule, CatalogTransition } from "@/db/queries";
 import { PairEditor } from "./PairEditor";
 
-type Props = { entry: CatalogTransition; nodes?: CatalogNode[]; compact?: boolean; canEdit?: boolean };
+type Props = { entry: CatalogTransition; nodes?: CatalogNode[]; compact?: boolean; canEdit?: boolean; canDeleteApproved?: boolean };
 
-export function EntryView({ entry, nodes = [], canEdit = false }: Props) {
+export function EntryView({ entry, nodes = [], canEdit = false, canDeleteApproved = false }: Props) {
   return <article className="entry">
     <ol className="rule-list">{entry.rules.map((rule) => <RuleView key={rule.id} rule={rule} />)}</ol>
-    {canEdit && <PairEditor entry={entry} nodes={nodes} />}
+    {canEdit && <PairEditor entry={entry} nodes={nodes} canDeleteApproved={canDeleteApproved} />}
   </article>;
 }
 
