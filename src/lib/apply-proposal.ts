@@ -13,11 +13,12 @@ import {
 } from "@/db/schema";
 import { type ProposalOperation } from "./proposals";
 import { wouldCreateCycle } from "./tree";
+import { migrateBypassedTransitionRules } from "./transition-migration";
 
 type Event = { type: string; id: string; action: string; before: unknown; after: unknown };
 
 /** Applies validated catalog operations immediately from the protected moderator editor. */
-export async function applyModeratorOperations(operations: ProposalOperation[], moderatorId: string, summary: string) {
+export async function applyModeratorOperations(operations: ProposalOperation[], moderatorId: string, summary: string, requiresReview = true) {
   if (operations.length === 0) throw new Error("Add at least one edit operation.");
   if (operations.some((operation) => operation.type === "editorial_request")) throw new Error("Editorial requests are not valid direct edits.");
 
@@ -26,7 +27,7 @@ export async function applyModeratorOperations(operations: ProposalOperation[], 
     if (conflict) throw new Error(conflict);
     const events: Event[] = [];
     for (const operation of operations) {
-      if (operation.type !== "editorial_request") events.push(...await applyOperation(tx, operation));
+      if (operation.type !== "editorial_request") events.push(...await applyOperation(tx, operation, requiresReview ? moderatorId : null));
     }
     for (const event of events) {
       await tx.insert(revisionEvents).values({
@@ -54,10 +55,10 @@ async function findConflict(tx: Transaction, operations: ProposalOperation[]): P
   return null;
 }
 
-async function applyOperation(tx: Transaction, operation: Exclude<ProposalOperation, { type: "editorial_request" }>): Promise<Event[]> {
+async function applyOperation(tx: Transaction, operation: Exclude<ProposalOperation, { type: "editorial_request" }>, submittedBy: string | null): Promise<Event[]> {
   if (operation.type === "create_lineage") {
     if (operation.data.parentId) await assertNodeExists(tx, operation.data.parentId);
-    const [after] = await tx.insert(lineageNodes).values({ ...operation.data, parentId: operation.data.parentId || null, aliases: [] }).returning();
+    const [after] = await tx.insert(lineageNodes).values({ ...operation.data, parentId: operation.data.parentId || null, aliases: [], approvalStatus: submittedBy ? "pending" : "approved", submittedBy }).returning();
     return [event("lineage", after.id, "create", null, after)];
   }
   if (operation.type === "update_lineage") {
@@ -77,19 +78,21 @@ async function applyOperation(tx: Transaction, operation: Exclude<ProposalOperat
   if (operation.type === "create_transition") {
     const data = operation.data;
     const [entry] = await tx.insert(transitions).values({ title: data.title, slug: data.slug, sourceNodeId: data.sourceNodeId, targetNodeId: data.targetNodeId, chronology: data.chronology, summary: data.summary, notes: data.notes }).returning();
-    const [rule] = await tx.insert(soundChanges).values({ transitionId: entry.id, ...data.rule }).returning();
+    const [rule] = await tx.insert(soundChanges).values({ transitionId: entry.id, ...data.rule, approvalStatus: submittedBy ? "pending" : "approved", submittedBy }).returning();
     if (data.source?.displayCitation) {
       const [source] = await tx.insert(sources).values({ displayCitation: data.source.displayCitation, url: data.source.url, doi: data.source.doi }).returning();
       await tx.insert(transitionSources).values({ transitionId: entry.id, sourceId: source.id });
     }
     if (data.example) await tx.insert(examples).values({ soundChangeId: rule.id, ...data.example });
-    return [event("transition", entry.id, "create", null, { ...entry, rule: data.rule, source: data.source, example: data.example })];
+    const migrated = await migrateBypassedTransitionRules(tx, entry.id, entry.sourceNodeId, entry.targetNodeId);
+    return [event("transition", entry.id, "create", null, { ...entry, rule: data.rule, source: data.source, example: data.example, migratedFromTransitionIds: migrated.fromTransitionIds, migratedRuleCount: migrated.ruleCount })];
   }
   if (operation.type === "update_transition") {
     const [before] = await tx.select().from(transitions).where(eq(transitions.id, operation.id)).limit(1);
     if (before.slug !== operation.data.slug) await tx.insert(slugAliases).values({ entityType: "transition", entityId: before.id, oldSlug: before.slug }).onConflictDoNothing();
     const [after] = await tx.update(transitions).set({ ...operation.data, revision: sql`${transitions.revision} + 1`, updatedAt: new Date() }).where(eq(transitions.id, operation.id)).returning();
-    return [event("transition", after.id, "update", before, after)];
+    const migrated = await migrateBypassedTransitionRules(tx, after.id, after.sourceNodeId, after.targetNodeId);
+    return [event("transition", after.id, "update", before, { ...after, migratedFromTransitionIds: migrated.fromTransitionIds, migratedRuleCount: migrated.ruleCount })];
   }
   if (operation.type === "delete_transition") {
     const [before] = await tx.select().from(transitions).where(eq(transitions.id, operation.id)).limit(1);
@@ -97,7 +100,7 @@ async function applyOperation(tx: Transaction, operation: Exclude<ProposalOperat
     return [event("transition", before.id, "delete", before, null)];
   }
   if (operation.type === "create_rule") {
-    const [after] = await tx.insert(soundChanges).values({ transitionId: operation.transitionId, ...operation.data }).returning();
+    const [after] = await tx.insert(soundChanges).values({ transitionId: operation.transitionId, ...operation.data, approvalStatus: submittedBy ? "pending" : "approved", submittedBy }).returning();
     return [event("rule", after.id, "create", null, after)];
   }
   if (operation.type === "update_rule") {

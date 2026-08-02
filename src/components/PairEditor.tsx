@@ -1,12 +1,12 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import type { CatalogTransition } from "@/db/queries";
+import type { CatalogNode, CatalogTransition } from "@/db/queries";
 import { deletePairAction, editPairAction, movePairAction } from "@/app/moderation/actions";
 
 type Row = { id: string; revision: number; input: string; output: string; environment: string; exceptions: string; exceptionExamples: string; comment: string; examples: string };
 type RuleSnapshot = Omit<Row, "revision"> & { explanation: string };
-export function PairEditor({ entry }: { entry: CatalogTransition }) {
+export function PairEditor({ entry, nodes }: { entry: CatalogTransition; nodes: CatalogNode[] }) {
   const [editing, setEditing] = useState(false);
   const [, startMove] = useTransition();
   const [rows, setRows] = useState<Row[]>(() => entry.rules.map((rule) => ({ id: rule.id, revision: rule.revision, input: rule.input, output: rule.output, environment: rule.environment, exceptions: rule.exceptions, exceptionExamples: rule.exceptionExamples.join(", "), comment: rule.qualifier, examples: rule.examples.map((example) => example.targetForm).join(", ") })));
@@ -21,9 +21,11 @@ export function PairEditor({ entry }: { entry: CatalogTransition }) {
   const move = (direction: "up" | "down") => startMove(() => { const data = new FormData(); data.set("transitionId", entry.id); data.set("direction", direction); return movePairAction(data); });
   const removePair = () => { if (!window.confirm(`Delete “${entry.title}” and all of its sound changes? This cannot be undone.`)) return; startMove(() => { const data = new FormData(); data.set("transitionId", entry.id); return deletePairAction(data); }); };
   if (!editing) return <button type="button" className="pair-edit" onClick={() => setEditing(true)} aria-label={`Edit ${entry.title}`}>✏️</button>;
+  const languageListId = `languages-${entry.id}`;
   return <form action={editPairAction} className="pair-editor"><input type="hidden" name="transitionId" value={entry.id} /><input type="hidden" name="transitionRevision" value={entry.revision} />
     {entry.rules.map((rule) => <input key={rule.id} type="hidden" name="originalRule" value={JSON.stringify(ruleSnapshot(rule))} />)}
     <div className="pair-editor__move"><span>Pair order</span><button type="button" onClick={() => move("up")}>↑</button><button type="button" onClick={() => move("down")}>↓</button></div>
+    <div className="pair-editor__names"><label>From<input name="sourceName" list={languageListId} required defaultValue={entry.sourceName} /></label><span>→</span><label>To<input name="targetName" list={languageListId} required defaultValue={entry.targetName} /></label></div><datalist id={languageListId}>{nodes.map((node) => <option key={node.id} value={node.name} />)}</datalist>
     <label className="pair-editor__source">Source citation<input name="sourceCitation" defaultValue={entry.sources[0]?.displayCitation ?? ""} placeholder="Author, year, title" /></label>
     <div className="pair-editor__rows">{rows.map((row, index) => <div className="rule-fields" key={`${row.id}-${index}`}>
       <input type="hidden" name="ruleId" value={row.id} /><input type="hidden" name="ruleRevision" value={row.revision} />

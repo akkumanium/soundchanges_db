@@ -7,9 +7,9 @@ export function CatalogBrowse({ entries, nodes, canEdit }: { entries: CatalogTra
   const numberedEntries = entries.map((entry) => ({ entry, number: numberForEntry(entry, entries, nodeMap) })).sort((a, b) => compareNumbers(a.number, b.number));
   return <section className="catalog-browse" aria-label="Sound-change catalogue">{canEdit && <PairCreator />}{entries.length === 0 && !canEdit && <p className="empty-state">No entries yet.</p>}
     {numberedEntries.map(({ entry, number }) => { return <article className="browse-entry" key={entry.id}>
-      <h2><span className="pair-number">{number}</span>{entry.sourceName} <span>→</span> {entry.targetName}</h2>
+      <h2><span className="pair-number">{number}</span><span className={`pair-name${entry.sourceApprovalStatus === "pending" ? " pending-addition" : ""}`}>{entry.sourceName}</span> <span className="pair-arrow">→</span> <span className={`pair-name${entry.targetApprovalStatus === "pending" ? " pending-addition" : ""}`}>{entry.targetName}</span>{(entry.sourceApprovalStatus === "pending" || entry.targetApprovalStatus === "pending") && <span className="pending-label">Pending review</span>}</h2>
       {entry.sources[0] && <p className="browse-citation">{entry.sources[0].displayCitation}</p>}
-      <EntryView entry={entry} canEdit={canEdit} />
+      <EntryView entry={entry} nodes={nodes} canEdit={canEdit} />
     </article>; })}
   </section>;
 }

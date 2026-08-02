@@ -5,6 +5,7 @@ import { db } from "./index";
 import {
   examples,
   lineageNodes,
+  moderators,
   revisionEvents,
   soundChanges,
   soundChangeSources,
@@ -23,6 +24,8 @@ export type CatalogRule = typeof soundChanges.$inferSelect & {
 export type CatalogTransition = typeof transitions.$inferSelect & {
   sourceName: string;
   targetName: string;
+  sourceApprovalStatus: "pending" | "approved" | "rejected";
+  targetApprovalStatus: "pending" | "approved" | "rejected";
   rules: CatalogRule[];
   sources: CatalogSource[];
 };
@@ -76,12 +79,20 @@ const loadCachedCatalog = unstable_cache(
       if (source) appendToMap(sourcesByTransition, link.transitionId, source);
     }
 
-    const nodeNameMap = new Map(nodeRows.map((node) => [node.id, node.name]));
-    const hydratedTransitions: CatalogTransition[] = transitionRows.map((transition) => ({
+    const visibleNodeRows = nodeRows.filter((node) => node.approvalStatus !== "rejected");
+    const visibleNodeIds = new Set(visibleNodeRows.map((node) => node.id));
+    const visibleRuleRows = ruleRows.filter((rule) => rule.approvalStatus !== "rejected");
+    const visibleRuleIds = new Set(visibleRuleRows.map((rule) => rule.id));
+    const nodeMapById = new Map(visibleNodeRows.map((node) => [node.id, node]));
+    const hydratedTransitions: CatalogTransition[] = transitionRows
+      .filter((transition) => visibleNodeIds.has(transition.sourceNodeId) && visibleNodeIds.has(transition.targetNodeId))
+      .map((transition) => ({
       ...transition,
-      sourceName: nodeNameMap.get(transition.sourceNodeId) ?? "Unknown stage",
-      targetName: nodeNameMap.get(transition.targetNodeId) ?? "Unknown stage",
-      rules: rulesByTransition.get(transition.id) ?? [],
+      sourceName: nodeMapById.get(transition.sourceNodeId)?.name ?? "Unknown stage",
+      targetName: nodeMapById.get(transition.targetNodeId)?.name ?? "Unknown stage",
+      sourceApprovalStatus: nodeMapById.get(transition.sourceNodeId)?.approvalStatus ?? "approved",
+      targetApprovalStatus: nodeMapById.get(transition.targetNodeId)?.approvalStatus ?? "approved",
+      rules: (rulesByTransition.get(transition.id) ?? []).filter((rule) => visibleRuleIds.has(rule.id)),
       sources: sourcesByTransition.get(transition.id) ?? [],
     }));
     const entriesByNode = new Map<string, CatalogTransition[]>();
@@ -89,7 +100,7 @@ const loadCachedCatalog = unstable_cache(
       appendToMap(entriesByNode, transition.sourceNodeId, transition);
     }
 
-    const hydratedNodes = nodeRows.map<CatalogNode>((node) => ({
+    const hydratedNodes = visibleNodeRows.map<CatalogNode>((node) => ({
       ...node,
       children: [],
       entries: entriesByNode.get(node.id) ?? [],
@@ -106,7 +117,7 @@ const loadCachedCatalog = unstable_cache(
       roots,
       nodes: hydratedNodes,
       transitions: hydratedTransitions,
-      demo: [...nodeRows, ...transitionRows, ...sourceRows].some((record) => record.isDemo),
+      demo: [...visibleNodeRows, ...transitionRows, ...sourceRows].some((record) => record.isDemo),
       databaseAvailable: true,
     };
   },
@@ -122,6 +133,40 @@ export async function getCatalog(): Promise<Catalog> {
     console.error(JSON.stringify({ level: "error", event: "catalog_query_failed", message: error instanceof Error ? error.message : "Unknown error" }));
     return { roots: [], nodes: [], transitions: [], demo: false, databaseAvailable: false };
   }
+}
+
+export type ReviewItem = {
+  id: string;
+  entityType: "language" | "sound_change";
+  title: string;
+  context: string;
+  status: "pending" | "approved" | "rejected";
+  submittedBy: string;
+  createdAt: Date;
+  reviewedAt: Date | null;
+};
+
+export async function getReviewItems(): Promise<ReviewItem[]> {
+  await connection();
+  const [nodes, rules, pairs, people] = await Promise.all([
+    db.select().from(lineageNodes),
+    db.select().from(soundChanges),
+    db.select().from(transitions),
+    db.select({ id: moderators.id, username: moderators.username }).from(moderators),
+  ]);
+  const names = new Map(nodes.map((node) => [node.id, node.name]));
+  const pairMap = new Map(pairs.map((pair) => [pair.id, `${names.get(pair.sourceNodeId) ?? "Unknown"} → ${names.get(pair.targetNodeId) ?? "Unknown"}`]));
+  const usernames = new Map(people.map((person) => [person.id, person.username]));
+  return [
+    ...nodes.filter((node) => node.submittedBy).map<ReviewItem>((node) => ({
+      id: node.id, entityType: "language", title: node.name, context: `${node.kind} · ${node.relationshipKind.replaceAll("_", " ")}`,
+      status: node.approvalStatus, submittedBy: usernames.get(node.submittedBy!) ?? "Former moderator", createdAt: node.createdAt, reviewedAt: node.reviewedAt,
+    })),
+    ...rules.filter((rule) => rule.submittedBy).map<ReviewItem>((rule) => ({
+      id: rule.id, entityType: "sound_change", title: rule.displayNotation, context: pairMap.get(rule.transitionId) ?? "Unknown language pair",
+      status: rule.approvalStatus, submittedBy: usernames.get(rule.submittedBy!) ?? "Former moderator", createdAt: rule.createdAt, reviewedAt: rule.reviewedAt,
+    })),
+  ].sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime());
 }
 
 export function revalidateCatalog(): void {

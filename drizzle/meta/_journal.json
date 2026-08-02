@@ -22,6 +22,13 @@
       "when": 1785340000000,
       "tag": "0002_add_exception_examples",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1785700000000,
+      "tag": "0003_add_catalog_approval",
+      "breakpoints": true
     }
   ]
 }

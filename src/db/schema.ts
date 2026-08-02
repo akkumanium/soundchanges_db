@@ -16,6 +16,7 @@ import {
 export const nodeKindEnum = pgEnum("node_kind", ["family", "subgroup", "stage", "language", "variety"]);
 export const relationshipKindEnum = pgEnum("relationship_kind", ["contains", "descends_from"]);
 export const moderatorRoleEnum = pgEnum("moderator_role", ["moderator", "admin"]);
+export const approvalStatusEnum = pgEnum("approval_status", ["pending", "approved", "rejected"]);
 
 export const lineageNodes = pgTable(
   "lineage_nodes",
@@ -31,6 +32,10 @@ export const lineageNodes = pgTable(
     sortOrder: integer("sort_order").notNull().default(0),
     revision: integer("revision").notNull().default(1),
     isDemo: boolean("is_demo").notNull().default(false),
+    approvalStatus: approvalStatusEnum("approval_status").notNull().default("approved"),
+    submittedBy: uuid("submitted_by"),
+    reviewedBy: uuid("reviewed_by"),
+    reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -79,6 +84,10 @@ export const soundChanges = pgTable(
     displayNotation: text("display_notation").notNull(),
     sortOrder: integer("sort_order").notNull().default(0),
     revision: integer("revision").notNull().default(1),
+    approvalStatus: approvalStatusEnum("approval_status").notNull().default("approved"),
+    submittedBy: uuid("submitted_by"),
+    reviewedBy: uuid("reviewed_by"),
+    reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },

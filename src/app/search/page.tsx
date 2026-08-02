@@ -23,7 +23,7 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
     <p className="search-help">Enter one or both sounds to find exact input → output correspondences. Leave either field empty to match any sound in that position.</p>
     {hasSearch && <p>{matches.length} {matches.length === 1 ? "result" : "results"} for <strong>{searchDescription}</strong></p>}
     <ul className="search-results">
-      {matches.map(({ entry, rule }) => <li className="search-result" key={rule.id}><p className="eyebrow">{entry.sourceName} → {entry.targetName}</p><p className="match-rule">{rule.displayNotation}</p>{rule.explanation && <p>{rule.explanation}</p>}</li>)}
+      {matches.map(({ entry, rule }) => <li className={`search-result${rule.approvalStatus === "pending" ? " search-result--pending" : ""}`} key={rule.id}><p className="eyebrow">{entry.sourceName} → {entry.targetName}</p><p className="match-rule">{rule.displayNotation}{rule.approvalStatus === "pending" && <span className="pending-label">Pending review</span>}</p>{rule.explanation && <p>{rule.explanation}</p>}</li>)}
     </ul>
     {hasSearch && !matches.length && <p className="empty-state">No published sound changes match this search.</p>}
     <IpaTable />
