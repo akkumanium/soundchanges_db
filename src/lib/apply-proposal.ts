@@ -111,6 +111,7 @@ async function applyOperation(tx: Transaction, operation: Exclude<ProposalOperat
   }
   if (operation.type === "update_rule") {
     const [before] = await tx.select().from(soundChanges).where(eq(soundChanges.id, operation.id)).limit(1);
+    if (!canDeleteApproved && before.approvalStatus !== "pending") throw new Error("Only administrators can edit approved sound changes.");
     const [after] = await tx.update(soundChanges).set({ ...operation.data, revision: sql`${soundChanges.revision} + 1`, updatedAt: new Date() }).where(eq(soundChanges.id, operation.id)).returning();
     return [event("rule", after.id, "update", before, after)];
   }
@@ -121,21 +122,30 @@ async function applyOperation(tx: Transaction, operation: Exclude<ProposalOperat
     return [event("rule", before.id, "delete", before, null)];
   }
   if (operation.type === "create_example") {
+    if (!canDeleteApproved) await assertPendingRule(tx, operation.soundChangeId);
     const [after] = await tx.insert(examples).values({ soundChangeId: operation.soundChangeId, ...operation.data }).returning();
     return [event("example", after.id, "create", null, after)];
   }
   if (operation.type === "update_example") {
     const [before] = await tx.select().from(examples).where(eq(examples.id, operation.id)).limit(1);
+    if (!canDeleteApproved) await assertPendingRule(tx, before.soundChangeId);
     const [after] = await tx.update(examples).set({ ...operation.data, revision: sql`${examples.revision} + 1`, updatedAt: new Date() }).where(eq(examples.id, operation.id)).returning();
     return [event("example", after.id, "update", before, after)];
   }
   if (operation.type === "delete_example") {
-    if (!canDeleteApproved) throw new Error("Only administrators can delete approved examples.");
     const [before] = await tx.select().from(examples).where(eq(examples.id, operation.id)).limit(1);
+    if (!canDeleteApproved) await assertPendingRule(tx, before.soundChangeId);
     await tx.delete(examples).where(eq(examples.id, operation.id));
     return [event("example", before.id, "delete", before, null)];
   }
   if (operation.type === "create_source") {
+    if (!canDeleteApproved) {
+      if (operation.targetType === "rule") await assertPendingRule(tx, operation.targetId);
+      else {
+        const [transition] = await tx.select().from(transitions).where(eq(transitions.id, operation.targetId)).limit(1);
+        if (!(await transitionIsPending(tx, transition))) throw new Error("Only administrators can edit approved language pairs.");
+      }
+    }
     const [after] = await tx.insert(sources).values({ displayCitation: operation.data.displayCitation, url: operation.data.url, doi: operation.data.doi }).returning();
     if (operation.targetType === "transition") await tx.insert(transitionSources).values({ transitionId: operation.targetId, sourceId: after.id });
     else await tx.insert(soundChangeSources).values({ soundChangeId: operation.targetId, sourceId: after.id });
@@ -147,6 +157,16 @@ async function applyOperation(tx: Transaction, operation: Exclude<ProposalOperat
 async function assertNodeExists(tx: Transaction, id: string) {
   const [node] = await tx.select({ id: lineageNodes.id }).from(lineageNodes).where(eq(lineageNodes.id, id)).limit(1);
   if (!node) throw new Error("The proposed parent no longer exists.");
+}
+
+async function assertPendingRule(tx: Transaction, id: string) {
+  const [rule] = await tx.select({ approvalStatus: soundChanges.approvalStatus }).from(soundChanges).where(eq(soundChanges.id, id)).limit(1);
+  if (!rule || rule.approvalStatus !== "pending") throw new Error("Only administrators can edit approved sound changes or their examples.");
+}
+
+async function transitionIsPending(tx: Transaction, transition: Pick<typeof transitions.$inferSelect, "sourceNodeId" | "targetNodeId">) {
+  const nodes = await tx.select({ id: lineageNodes.id, approvalStatus: lineageNodes.approvalStatus }).from(lineageNodes);
+  return [transition.sourceNodeId, transition.targetNodeId].some((id) => nodes.find((node) => node.id === id)?.approvalStatus === "pending");
 }
 
 function event(type: string, id: string, action: string, before: unknown, after: unknown): Event { return { type, id, action, before, after }; }

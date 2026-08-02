@@ -82,6 +82,7 @@ export async function inlineEditAction(formData: FormData) {
     } else if (entity === "rule") {
       const [before] = await tx.select().from(soundChanges).where(eq(soundChanges.id, id));
       if (!before || before.revision !== revision) throw new Error("This rule was changed by someone else. Refresh and try again.");
+      if (moderator.role !== "admin" && before.approvalStatus !== "pending") throw new Error("Only administrators can edit approved sound changes.");
       const displayNotation = String(formData.get("displayNotation") ?? "").trim().normalize("NFC");
       const explanation = String(formData.get("explanation") ?? "").trim().normalize("NFC");
       const [after] = await tx.update(soundChanges).set({ displayNotation, explanation, revision: sql`${soundChanges.revision} + 1`, updatedAt: new Date() }).where(eq(soundChanges.id, id)).returning();
@@ -153,6 +154,7 @@ export async function editPairAction(formData: FormData) {
         if (!before || !original) throw new Error("A sound change no longer exists.");
         const currentWords = await ruleWords(tx, ruleId);
         const merged = mergeRuleEdit(before, currentWords, original, submitted, index);
+        if (moderator.role !== "admin" && before.approvalStatus !== "pending" && (merged.data || merged.words)) throw new Error("Only administrators can edit approved sound changes.");
         if (merged.data) {
           await tx.update(soundChanges).set({ ...merged.data, revision: sql`${soundChanges.revision} + 1`, updatedAt: new Date() }).where(eq(soundChanges.id, ruleId));
           changed = true;
@@ -170,6 +172,7 @@ export async function editPairAction(formData: FormData) {
       }
     }
     if (sourceCitation !== (existingSources[0]?.displayCitation ?? "")) {
+      if (moderator.role !== "admin") throw new Error("Only administrators can edit citations on approved language pairs.");
       await tx.delete(transitionSources).where(eq(transitionSources.transitionId, transitionId));
       if (sourceCitation) {
         const [source] = await tx.insert(sources).values({ displayCitation: sourceCitation }).returning();
@@ -236,7 +239,8 @@ function mergeRuleEdit(current: typeof soundChanges.$inferSelect, currentWords: 
 }
 
 export async function movePairAction(formData: FormData) {
-  await requireModerator();
+  const moderator = await requireModerator();
+  if (moderator.role !== "admin") throw new Error("Only administrators can reorder language pairs.");
   const id = String(formData.get("transitionId") ?? ""); const direction = String(formData.get("direction") ?? "");
   if (!id || (direction !== "up" && direction !== "down")) throw new Error("Invalid pair move.");
   const list = await db.select().from(transitions).orderBy(transitions.sortOrder, transitions.title);
