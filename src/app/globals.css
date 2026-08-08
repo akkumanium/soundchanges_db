@@ -54,7 +54,7 @@ button:hover, .button-link:hover { color: white; background: var(--accent-dark);
 .catalog-counts dd { margin: 0; font-family: var(--font-serif), serif; font-size: 1.8rem; }
 .section-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; border-bottom: 1px solid var(--ink); }
 .section-heading h2 { margin: 0 0 .65rem; font-family: var(--font-serif), serif; font-size: 1.7rem; }
-.family-index ul, .search-results, .history-list { margin: 0; padding: 0; list-style: none; }
+.family-index ul, .search-results { margin: 0; padding: 0; list-style: none; }
 .family-index li { display: flex; justify-content: space-between; gap: 1rem; padding: .8rem 0; border-bottom: 1px solid var(--line); }
 .family-index li span { color: var(--muted); font-size: .86rem; }
 .empty-state { padding: 2.5rem 0; color: var(--muted); font-family: var(--font-serif), serif; font-size: 1.2rem; }
@@ -133,8 +133,7 @@ details > summary { cursor: pointer; }
 .ipa-symbol:hover { color: white; background: var(--accent); }
 .ipa-other { margin-top: 2rem; }
 .ipa-other .ipa-symbol { border: 1px solid var(--line); }
-.history-list li { padding: 1rem 0; border-bottom: 1px solid var(--line); }
-.history-list time { color: var(--muted); font-size: .78rem; }
+/* history list removed */
 .site-footer { width: min(1180px, calc(100% - 2rem)); margin: auto; padding: 2rem 0 3rem; border-top: 1px solid var(--line); display: flex; justify-content: space-between; gap: 2rem; color: var(--muted); font-size: .78rem; }
 .site-footer p { margin: .15rem 0; }
 .site-footer nav { align-items: flex-start; }

@@ -52,7 +52,7 @@ export async function directEditAction(formData: FormData) {
   }
   await applyModeratorOperations(operations, moderator.id, summary, moderator.role !== "admin");
   revalidateCatalog();
-  revalidatePath("/"); revalidatePath("/browse"); revalidatePath("/search"); revalidatePath("/history");
+  revalidatePath("/"); revalidatePath("/browse"); revalidatePath("/search");
   redirect("/moderation");
 }
 
@@ -363,7 +363,6 @@ export async function reviewCatalogItemAction(formData: FormData) {
   revalidatePath("/moderation/review");
   revalidatePath("/browse");
   revalidatePath("/search");
-  revalidatePath("/history");
 }
 
 function reviewFields(moderator: Awaited<ReturnType<typeof requireModerator>>) {

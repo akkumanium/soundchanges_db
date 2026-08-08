@@ -10,7 +10,6 @@ export function SiteFooter() {
       </div>
       <nav aria-label="Footer navigation">
         <Link href="/conventions">Notation</Link>
-        <Link href="/history">History</Link>
         <Link href="/moderation/login">Moderation</Link>
       </nav>
     </footer>
