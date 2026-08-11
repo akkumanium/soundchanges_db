@@ -13,6 +13,21 @@
   color-scheme: light;
 }
 
+:root[data-theme="dark"] {
+  --paper: #171a18;
+  --paper-deep: #242925;
+  --ink: #e8e8df;
+  --muted: #aab2aa;
+  --line: #414740;
+  --accent: #78c7b8;
+  --accent-dark: #a1ddd1;
+  --good: #8fca96;
+  --warning: #d5ab59;
+  --review-red: #ef8b82;
+  --review-red-soft: #3b2524;
+  color-scheme: dark;
+}
+
 * { box-sizing: border-box; }
 html { scroll-behavior: smooth; }
 body { margin: 0; color: var(--ink); background: var(--paper); font-family: var(--font-sans), "Noto Sans", sans-serif; font-size: 16px; line-height: 1.55; }
@@ -27,7 +42,10 @@ button { cursor: pointer; }
 .site-header__inner { width: min(1180px, calc(100% - 2rem)); margin: auto; min-height: 64px; display: flex; align-items: center; justify-content: space-between; gap: 2rem; }
 .wordmark { color: var(--ink); font-family: var(--font-serif), serif; font-size: 1.22rem; font-weight: 700; text-decoration: none; letter-spacing: -.02em; }
 .site-header nav, .site-footer nav { display: flex; gap: 1.25rem; flex-wrap: wrap; }
+.site-header nav { align-items: center; }
 .site-header nav a, .site-footer nav a { color: var(--ink); font-size: .91rem; text-decoration: none; }
+.theme-toggle { display: inline-grid; width: 2rem; height: 2rem; place-items: center; margin: 0; padding: 0; border: 1px solid var(--line); border-radius: 50%; color: var(--ink); background: transparent; font-size: 1.05rem; line-height: 1; }
+.theme-toggle:hover { color: var(--paper); background: var(--ink); }
 main { min-height: calc(100vh - 220px); }
 .page-shell { width: min(960px, calc(100% - 2rem)); margin: 0 auto; padding: 4.5rem 0 6rem; }
 .page-shell--wide { width: min(1180px, calc(100% - 2rem)); }
@@ -149,8 +167,16 @@ details > summary { cursor: pointer; }
 pre.diff { overflow: auto; padding: 1rem; border: 1px solid var(--line); background: #fffdf7; font-size: .78rem; white-space: pre-wrap; }
 
 /* The catalogue is a quiet scholarly index: typography, spacing, and rules do the work. */
+.browse-toc { width: min(48rem, 100%); margin-bottom: 3rem; padding: .9rem 1.1rem 1rem; border: 1px solid var(--line); background: var(--paper-deep); }
+.browse-toc h2 { margin: 0 0 .65rem; font-family: var(--font-sans), sans-serif; font-size: .95rem; font-weight: 750; text-align: center; }
+.browse-toc ol { margin: 0; padding: 0; list-style: none; }
+.browse-toc ol ol { margin: .15rem 0 .15rem 1.6rem; }
+.browse-toc li { margin: .2rem 0; }
+.browse-toc a { display: grid; grid-template-columns: 3.5rem 1fr; gap: .35rem; color: var(--accent); font-size: .9rem; line-height: 1.4; text-decoration: none; }
+.browse-toc a:hover { color: var(--accent-dark); text-decoration: underline; }
+.browse-toc__number { color: var(--muted); font-variant-numeric: tabular-nums; }
 .catalog-browse { border-top: 1px solid #242722; }
-.browse-entry { position: relative; padding: 1.25rem 0 1.4rem; border-bottom: 1px solid #bcbcb4; }
+.browse-entry { position: relative; scroll-margin-top: 1rem; padding: 1.25rem 0 1.4rem; border-bottom: 1px solid #bcbcb4; }
 .browse-entry h2 { display: flex; align-items: baseline; flex-wrap: wrap; gap: .38rem; margin: 0; color: #1d211f; font-family: var(--font-serif), serif; font-size: clamp(1.2rem, 2vw, 1.55rem); font-weight: 600; line-height: 1.3; letter-spacing: -.018em; }
 .browse-entry .pair-arrow { color: #6b706b; }
 .pair-number { min-width: 3.2rem; color: #6c716b; font-family: var(--font-sans), sans-serif; font-size: .7rem; font-weight: 700; letter-spacing: .08em; }
@@ -238,6 +264,48 @@ pre.diff { overflow: auto; padding: 1rem; border: 1px solid var(--line); backgro
 .reviewed-row { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 1rem; padding: .85rem 0; border-bottom: 1px solid var(--line); }
 .reviewed-row p { margin: .05rem 0 0; color: var(--muted); font-size: .75rem; }
 .reviewed-row time { color: var(--muted); font-size: .75rem; }
+
+/* Night palette for surfaces that intentionally use colors outside the shared tokens. */
+:root[data-theme="dark"] .lede,
+:root[data-theme="dark"] .node-description,
+:root[data-theme="dark"] .editorial-note,
+:root[data-theme="dark"] .rule-explanation,
+:root[data-theme="dark"] .example-note,
+:root[data-theme="dark"] .browse-citation,
+:root[data-theme="dark"] .browse-entry .rule-explanation,
+:root[data-theme="dark"] .review-context { color: #b9c0b9; }
+:root[data-theme="dark"] input,
+:root[data-theme="dark"] select,
+:root[data-theme="dark"] textarea,
+:root[data-theme="dark"] pre.diff,
+:root[data-theme="dark"] .examples-list,
+:root[data-theme="dark"] .pair-editor__source input,
+:root[data-theme="dark"] .pair-editor__names input,
+:root[data-theme="dark"] .rule-fields input { border-color: #555d55; color: var(--ink); background: #202421; }
+:root[data-theme="dark"] .notice { background: #302817; }
+:root[data-theme="dark"] .notice--demo { color: #e3c985; }
+:root[data-theme="dark"] .success-message { background: #1d2c20; }
+:root[data-theme="dark"] .entry-disclosure > summary { background: rgba(255,255,255,.035); }
+:root[data-theme="dark"] .browse-entry h2,
+:root[data-theme="dark"] .browse-entry .rule-notation { color: var(--ink); }
+:root[data-theme="dark"] .catalog-browse { border-color: var(--ink); }
+:root[data-theme="dark"] .browse-entry { border-color: var(--line); }
+:root[data-theme="dark"] .examples-disclosure > summary,
+:root[data-theme="dark"] .example,
+:root[data-theme="dark"] .add-pair { color: var(--good); }
+:root[data-theme="dark"] .pair-editor,
+:root[data-theme="dark"] .pair-creator { border-color: var(--line); background: #202421; }
+:root[data-theme="dark"] .pair-editor__move button,
+:root[data-theme="dark"] .rule-fields__order button { border-color: #555d55; color: var(--ink); background: #292e2a; }
+:root[data-theme="dark"] .pair-editor input[readonly] { border-color: #444b44; color: #929a92; background: #2b302c; }
+:root[data-theme="dark"] .delete-pair { color: #ef9c93; background: #3a2422; }
+:root[data-theme="dark"] .inline-editor { color: var(--ink); background: #1b252c; box-shadow: 0 18px 55px rgba(0, 0, 0, .45); }
+:root[data-theme="dark"] .dialog-close:hover { color: var(--ink); background: #293944; }
+:root[data-theme="dark"] .review-card { border-color: #754945; background: #211e1b; box-shadow: 0 9px 24px rgba(0, 0, 0, .2); }
+:root[data-theme="dark"] .review-card dl { border-color: #49423c; }
+:root[data-theme="dark"] .review-status--approved { color: var(--good); background: #1d2c20; }
+:root[data-theme="dark"] .review-status--rejected { color: #b8b0ab; background: #302d2a; }
+:root[data-theme="dark"] .reject-button { color: #ef9c93; }
 
 @media (max-width: 700px) {
   .site-header__inner { align-items: flex-start; flex-direction: column; gap: .55rem; padding: .8rem 0; }
