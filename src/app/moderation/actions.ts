@@ -6,13 +6,14 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { db } from "@/db";
 import { revalidateCatalog } from "@/db/queries";
-import { examples, lineageNodes, moderators, revisionEvents, soundChanges, sources, transitionSources, transitions } from "@/db/schema";
+import { examples, lineageNodes, moderators, soundChanges, sources, transitionSources, transitions } from "@/db/schema";
 import { applyModeratorOperations } from "@/lib/apply-proposal";
 import { authenticate, createSession, destroySession, passwordHash, requireModerator } from "@/lib/auth";
 import { parseOperations } from "@/lib/proposals";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { composeRule, slugify } from "@/lib/domain";
 import { migrateBypassedTransitionRules } from "@/lib/transition-migration";
+import { auditedCatalogMutation, revertCatalogChange, type CatalogTransaction } from "@/lib/catalog-audit";
 
 export type LoginState = { error: string };
 
@@ -50,7 +51,7 @@ export async function directEditAction(formData: FormData) {
   } catch {
     throw new Error("The edit must be valid JSON matching a supported operation.");
   }
-  await applyModeratorOperations(operations, moderator.id, summary, moderator.role !== "admin");
+  await applyModeratorOperations(operations, moderator.id, summary);
   revalidateCatalog();
   revalidatePath("/"); revalidatePath("/browse"); revalidatePath("/search");
   redirect("/moderation");
@@ -64,32 +65,28 @@ export async function inlineEditAction(formData: FormData) {
   const revision = Number(formData.get("revision"));
   const summary = "Inline edit";
   if (!id || !Number.isInteger(revision)) throw new Error("Invalid editor target.");
-  await db.transaction(async (tx) => {
+  await auditedCatalogMutation(moderator.id, "edit", summary, async (tx) => {
     if (entity === "node") {
       const [before] = await tx.select().from(lineageNodes).where(eq(lineageNodes.id, id));
       if (!before || before.revision !== revision) throw new Error("This name was changed by someone else. Refresh and try again.");
       const name = String(formData.get("name") ?? "").trim().normalize("NFC");
       if (!name) throw new Error("Enter a name.");
-      const [after] = await tx.update(lineageNodes).set({ name, revision: sql`${lineageNodes.revision} + 1`, updatedAt: new Date() }).where(eq(lineageNodes.id, id)).returning();
-      await tx.insert((await import("@/db/schema")).revisionEvents).values({ moderatorId: moderator.id, entityType: "node", entityId: id, action: "update", summary, beforeSnapshot: before, afterSnapshot: after });
+      await tx.update(lineageNodes).set({ name, revision: sql`${lineageNodes.revision} + 1`, updatedAt: new Date() }).where(eq(lineageNodes.id, id));
     } else if (entity === "transition") {
       const [before] = await tx.select().from(transitions).where(eq(transitions.id, id));
       if (!before || before.revision !== revision) throw new Error("This entry was changed by someone else. Refresh and try again.");
       const title = String(formData.get("title") ?? "").trim().normalize("NFC");
       const entrySummary = String(formData.get("summary") ?? "").trim().normalize("NFC");
-      const [after] = await tx.update(transitions).set({ title, summary: entrySummary, revision: sql`${transitions.revision} + 1`, updatedAt: new Date() }).where(eq(transitions.id, id)).returning();
-      await tx.insert((await import("@/db/schema")).revisionEvents).values({ moderatorId: moderator.id, entityType: "transition", entityId: id, action: "update", summary, beforeSnapshot: before, afterSnapshot: after });
+      await tx.update(transitions).set({ title, summary: entrySummary, revision: sql`${transitions.revision} + 1`, updatedAt: new Date() }).where(eq(transitions.id, id));
     } else if (entity === "rule") {
       const [before] = await tx.select().from(soundChanges).where(eq(soundChanges.id, id));
       if (!before || before.revision !== revision) throw new Error("This rule was changed by someone else. Refresh and try again.");
-      if (moderator.role !== "admin" && before.approvalStatus !== "pending") throw new Error("Only administrators can edit approved sound changes.");
       const displayNotation = String(formData.get("displayNotation") ?? "").trim().normalize("NFC");
       const explanation = String(formData.get("explanation") ?? "").trim().normalize("NFC");
-      const [after] = await tx.update(soundChanges).set({ displayNotation, explanation, revision: sql`${soundChanges.revision} + 1`, updatedAt: new Date() }).where(eq(soundChanges.id, id)).returning();
+      await tx.update(soundChanges).set({ displayNotation, explanation, revision: sql`${soundChanges.revision} + 1`, updatedAt: new Date() }).where(eq(soundChanges.id, id));
       const words = [...new Set(String(formData.get("words") ?? "").split(",").map((word) => word.trim().normalize("NFC")).filter(Boolean))];
       await tx.delete(examples).where(eq(examples.soundChangeId, id));
       if (words.length) await tx.insert(examples).values(words.map((targetForm, sortOrder) => ({ soundChangeId: id, sourceForm: targetForm, targetForm, targetWiktionaryUrl: `https://en.wiktionary.org/wiki/${encodeURIComponent(targetForm)}`, sortOrder })));
-      await tx.insert((await import("@/db/schema")).revisionEvents).values({ moderatorId: moderator.id, entityType: "rule", entityId: id, action: "update", summary, beforeSnapshot: before, afterSnapshot: after });
     } else throw new Error("Unknown editor target.");
   });
   revalidateCatalog();
@@ -115,7 +112,7 @@ export async function editPairAction(formData: FormData) {
   const targetName = String(formData.get("targetName") ?? "").trim().normalize("NFC");
   const originalRules = new Map(formData.getAll("originalRule").map(String).map(parseRuleSnapshot).map((rule) => [rule.id, rule]));
   if (!transitionId || !Number.isInteger(transitionRevision) || !sourceName || !targetName || sourceName === targetName || inputs.some((value, index) => !value.trim() || !outputs[index]?.trim())) throw new Error("Enter two different language or stage names, and complete every sound change.");
-  await db.transaction(async (tx) => {
+  await auditedCatalogMutation(moderator.id, "edit", summary, async (tx) => {
     // Locking the pair and its rules makes the comparison below atomic. A second
     // editor waits here, then merges against the first editor's committed data.
     await tx.execute(sql`select id from ${transitions} where ${transitions.id} = ${transitionId} for update`);
@@ -129,8 +126,7 @@ export async function editPairAction(formData: FormData) {
     if (sourceChanged || targetChanged) {
       if (transition.revision !== transitionRevision) throw new Error("This language pair was changed by someone else. Refresh and try again.");
       await placeStagesForPairInTransaction(tx, sourceResult.node.id, targetResult.node.id, sourceResult.created);
-      const [after] = await tx.update(transitions).set({ sourceNodeId: sourceResult.node.id, targetNodeId: targetResult.node.id, title: `${sourceResult.node.name} to ${targetResult.node.name}`, revision: sql`${transitions.revision} + 1`, updatedAt: new Date() }).where(eq(transitions.id, transitionId)).returning();
-      await tx.insert((await import("@/db/schema")).revisionEvents).values({ moderatorId: moderator.id, entityType: "transition", entityId: transitionId, action: "update", summary: "Changed language pair", beforeSnapshot: transition, afterSnapshot: after });
+      await tx.update(transitions).set({ sourceNodeId: sourceResult.node.id, targetNodeId: targetResult.node.id, title: `${sourceResult.node.name} to ${targetResult.node.name}`, revision: sql`${transitions.revision} + 1`, updatedAt: new Date() }).where(eq(transitions.id, transitionId));
     }
     const existing = await tx.select().from(soundChanges).where(eq(soundChanges.transitionId, transitionId));
     const existingSources = await tx.select({ displayCitation: sources.displayCitation }).from(transitionSources).innerJoin(sources, eq(transitionSources.sourceId, sources.id)).where(eq(transitionSources.transitionId, transitionId));
@@ -138,7 +134,6 @@ export async function editPairAction(formData: FormData) {
     let changed = false;
     for (const rule of existing) {
       if (!submittedIds.has(rule.id)) {
-        if (moderator.role !== "admin" && rule.approvalStatus !== "pending") throw new Error("Only administrators can delete approved sound changes.");
         const original = originalRules.get(rule.id);
         if (!original || !sameRuleSnapshot(rule, await ruleWords(tx, rule.id), original)) throw new Error("This sound change was changed by someone else. Refresh and resolve the conflicting deletion.");
         await tx.delete(soundChanges).where(eq(soundChanges.id, rule.id));
@@ -154,7 +149,6 @@ export async function editPairAction(formData: FormData) {
         if (!before || !original) throw new Error("A sound change no longer exists.");
         const currentWords = await ruleWords(tx, ruleId);
         const merged = mergeRuleEdit(before, currentWords, original, submitted, index);
-        if (moderator.role !== "admin" && before.approvalStatus !== "pending" && (merged.data || merged.words)) throw new Error("Only administrators can edit approved sound changes.");
         if (merged.data) {
           await tx.update(soundChanges).set({ ...merged.data, revision: sql`${soundChanges.revision} + 1`, updatedAt: new Date() }).where(eq(soundChanges.id, ruleId));
           changed = true;
@@ -172,7 +166,6 @@ export async function editPairAction(formData: FormData) {
       }
     }
     if (sourceCitation !== (existingSources[0]?.displayCitation ?? "")) {
-      if (moderator.role !== "admin") throw new Error("Only administrators can edit citations on approved language pairs.");
       await tx.delete(transitionSources).where(eq(transitionSources.transitionId, transitionId));
       if (sourceCitation) {
         const [source] = await tx.insert(sources).values({ displayCitation: sourceCitation }).returning();
@@ -182,7 +175,6 @@ export async function editPairAction(formData: FormData) {
     }
     if (changed) {
       await tx.update(transitions).set({ revision: sql`${transitions.revision} + 1`, updatedAt: new Date() }).where(eq(transitions.id, transitionId));
-      await tx.insert((await import("@/db/schema")).revisionEvents).values({ moderatorId: moderator.id, entityType: "transition", entityId: transitionId, action: "update_rules", summary, beforeSnapshot: { ruleCount: existing.length, sourceCitation: existingSources[0]?.displayCitation ?? "" }, afterSnapshot: { ruleCount: inputs.length, sourceCitation } });
     }
   });
   revalidateCatalog();
@@ -240,14 +232,13 @@ function mergeRuleEdit(current: typeof soundChanges.$inferSelect, currentWords: 
 
 export async function movePairAction(formData: FormData) {
   const moderator = await requireModerator();
-  if (moderator.role !== "admin") throw new Error("Only administrators can reorder language pairs.");
   const id = String(formData.get("transitionId") ?? ""); const direction = String(formData.get("direction") ?? "");
   if (!id || (direction !== "up" && direction !== "down")) throw new Error("Invalid pair move.");
   const list = await db.select().from(transitions).orderBy(transitions.sortOrder, transitions.title);
   const index = list.findIndex((entry) => entry.id === id); const swapIndex = index + (direction === "up" ? -1 : 1);
   if (index < 0 || swapIndex < 0 || swapIndex >= list.length) return;
   [list[index], list[swapIndex]] = [list[swapIndex], list[index]];
-  await db.transaction(async (tx) => { for (const [order, entry] of list.entries()) await tx.update(transitions).set({ sortOrder: order, updatedAt: new Date() }).where(eq(transitions.id, entry.id)); });
+  await auditedCatalogMutation(moderator.id, "reorder", "Reordered language pairs", async (tx) => { for (const [order, entry] of list.entries()) await tx.update(transitions).set({ sortOrder: order, updatedAt: new Date() }).where(eq(transitions.id, entry.id)); });
   revalidateCatalog();
   revalidatePath("/browse");
 }
@@ -256,18 +247,12 @@ export async function deletePairAction(formData: FormData) {
   const moderator = await requireModerator();
   const id = String(formData.get("transitionId") ?? "");
   if (!id) throw new Error("Invalid language pair.");
-  await db.transaction(async (tx) => {
+  await auditedCatalogMutation(moderator.id, "delete", "Deleted language pair", async (tx) => {
     const [before] = await tx.select().from(transitions).where(eq(transitions.id, id));
     if (!before) throw new Error("This language pair no longer exists.");
-    if (moderator.role !== "admin") {
-      const [nodes, rules] = await Promise.all([tx.select().from(lineageNodes), tx.select().from(soundChanges).where(eq(soundChanges.transitionId, id))]);
-      const hasPendingLanguage = [before.sourceNodeId, before.targetNodeId].some((nodeId) => nodes.find((node) => node.id === nodeId)?.approvalStatus === "pending");
-      if (!hasPendingLanguage || rules.some((rule) => rule.approvalStatus !== "pending")) throw new Error("Only administrators can delete approved language pairs or pairs containing approved sound changes.");
-    }
     await tx.delete(transitions).where(eq(transitions.id, id));
-    await tx.insert((await import("@/db/schema")).revisionEvents).values({ moderatorId: moderator.id, entityType: "transition", entityId: id, action: "delete", summary: "Deleted language pair", beforeSnapshot: before });
+    await pruneUnusedStages(tx);
   });
-  await pruneUnusedStages(moderator.role !== "admin");
   revalidateCatalog();
   revalidatePath("/browse"); revalidatePath("/search");
 }
@@ -277,16 +262,15 @@ export async function addPairAction(formData: FormData) {
   const sourceName = String(formData.get("sourceName") ?? "").trim().normalize("NFC"); const targetName = String(formData.get("targetName") ?? "").trim().normalize("NFC");
   if (!sourceName || !targetName || sourceName === targetName) throw new Error("Enter two different language or stage names.");
   const existingPairs = await db.select({ id: transitions.id }).from(transitions);
-  if (existingPairs.length === 0) await pruneUnusedStages(moderator.role !== "admin");
-  await db.transaction(async (tx) => {
+  await auditedCatalogMutation(moderator.id, "create", "Added language pair", async (tx) => {
+    if (existingPairs.length === 0) await pruneUnusedStages(tx);
     const sourceResult = await findOrCreateNodeInTransaction(tx, sourceName, moderator);
     const targetResult = await findOrCreateNodeInTransaction(tx, targetName, moderator);
     const source = sourceResult.node; const target = targetResult.node;
     await placeStagesForPairInTransaction(tx, source.id, target.id, sourceResult.created);
     const title = `${source.name} to ${target.name}`; const slug = `${slugify(title)}-${Date.now().toString(36)}`;
     const [after] = await tx.insert(transitions).values({ sourceNodeId: source.id, targetNodeId: target.id, title, slug, sortOrder: (await tx.select({ id: transitions.id }).from(transitions)).length }).returning();
-    const migrated = await migrateBypassedTransitionRules(tx, after.id, source.id, target.id);
-    await tx.insert((await import("@/db/schema")).revisionEvents).values({ moderatorId: moderator.id, entityType: "transition", entityId: after.id, action: "create", summary: migrated.ruleCount ? `Added language pair and migrated ${migrated.ruleCount} sound change${migrated.ruleCount === 1 ? "" : "s"}` : "Added language pair", afterSnapshot: { ...after, migratedFromTransitionIds: migrated.fromTransitionIds, migratedRuleCount: migrated.ruleCount } });
+    await migrateBypassedTransitionRules(tx, after.id, source.id, target.id);
   });
   revalidateCatalog();
   revalidatePath("/browse"); revalidatePath("/search");
@@ -313,13 +297,13 @@ async function placeStagesForPairInTransaction(tx: Parameters<Parameters<typeof 
 }
 
 /** Nodes are only useful while a pair refers to them; remove abandoned hierarchy after deletion. */
-async function pruneUnusedStages(onlyPending = false) {
+async function pruneUnusedStages(tx: CatalogTransaction) {
   while (true) {
-    const [nodes, pairs] = await Promise.all([db.select().from(lineageNodes), db.select().from(transitions)]);
+    const [nodes, pairs] = await Promise.all([tx.select().from(lineageNodes), tx.select().from(transitions)]);
     const used = new Set(pairs.flatMap((pair) => [pair.sourceNodeId, pair.targetNodeId]));
-    const removable = nodes.filter((node) => (!onlyPending || node.approvalStatus === "pending") && !used.has(node.id) && !nodes.some((candidate) => candidate.parentId === node.id));
+    const removable = nodes.filter((node) => !used.has(node.id) && !nodes.some((candidate) => candidate.parentId === node.id));
     if (removable.length === 0) return;
-    for (const node of removable) await db.delete(lineageNodes).where(eq(lineageNodes.id, node.id));
+    for (const node of removable) await tx.delete(lineageNodes).where(eq(lineageNodes.id, node.id));
   }
 }
 
@@ -352,12 +336,11 @@ export async function reviewCatalogItemAction(formData: FormData) {
   const entityId = String(formData.get("entityId") ?? "");
   const decision = String(formData.get("decision") ?? "");
   if (!entityId || (entityType !== "language" && entityType !== "sound_change") || (decision !== "approved" && decision !== "rejected")) throw new Error("Invalid review decision.");
-  await db.transaction(async (tx) => {
+  await auditedCatalogMutation(moderator.id, decision === "approved" ? "approve" : "reject", `${decision === "approved" ? "Approved" : "Rejected"} ${entityType === "language" ? "language" : "sound change"}`, async (tx) => {
     const table = entityType === "language" ? lineageNodes : soundChanges;
     const [before] = await tx.select().from(table).where(and(eq(table.id, entityId), eq(table.approvalStatus, "pending"))).limit(1);
     if (!before) throw new Error("This item has already been reviewed or no longer exists.");
-    const [after] = await tx.update(table).set({ approvalStatus: decision, reviewedBy: moderator.id, reviewedAt: new Date(), revision: sql`${table.revision} + 1`, updatedAt: new Date() }).where(and(eq(table.id, entityId), eq(table.approvalStatus, "pending"))).returning();
-    await tx.insert(revisionEvents).values({ moderatorId: moderator.id, entityType, entityId, action: decision === "approved" ? "approve" : "reject", summary: `${decision === "approved" ? "Approved" : "Rejected"} ${entityType === "language" ? "language" : "sound change"}`, beforeSnapshot: before, afterSnapshot: after });
+    await tx.update(table).set({ approvalStatus: decision, reviewedBy: moderator.id, reviewedAt: new Date(), revision: sql`${table.revision} + 1`, updatedAt: new Date() }).where(and(eq(table.id, entityId), eq(table.approvalStatus, "pending")));
   });
   revalidateCatalog();
   revalidatePath("/moderation/review");
@@ -366,5 +349,16 @@ export async function reviewCatalogItemAction(formData: FormData) {
 }
 
 function reviewFields(moderator: Awaited<ReturnType<typeof requireModerator>>) {
-  return moderator.role === "admin" ? { approvalStatus: "approved" as const } : { approvalStatus: "pending" as const, submittedBy: moderator.id };
+  void moderator;
+  return { approvalStatus: "approved" as const };
+}
+
+export async function revertCatalogChangeAction(formData: FormData) {
+  const moderator = await requireModerator();
+  if (moderator.role !== "admin") throw new Error("Administrator access is required.");
+  const changeId = String(formData.get("changeId") ?? "");
+  if (!changeId) throw new Error("Invalid history entry.");
+  await revertCatalogChange(changeId, moderator.id);
+  revalidateCatalog();
+  revalidatePath("/"); revalidatePath("/browse"); revalidatePath("/search"); revalidatePath("/moderation/history");
 }

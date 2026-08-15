@@ -196,6 +196,32 @@ export const revisionEvents = pgTable(
   (table) => [index("revision_events_created_idx").on(table.createdAt)],
 );
 
+export const catalogChanges = pgTable(
+  "catalog_changes",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    moderatorId: uuid("moderator_id").references(() => moderators.id, { onDelete: "set null" }),
+    action: text("action").notNull(),
+    summary: text("summary").notNull(),
+    revertsChangeId: uuid("reverts_change_id").references((): AnyPgColumn => catalogChanges.id, { onDelete: "restrict" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("catalog_changes_created_idx").on(table.createdAt), index("catalog_changes_moderator_idx").on(table.moderatorId)],
+);
+
+export const catalogChangeItems = pgTable(
+  "catalog_change_items",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    changeId: uuid("change_id").notNull().references(() => catalogChanges.id, { onDelete: "restrict" }),
+    tableName: text("table_name").notNull(),
+    rowKey: text("row_key").notNull(),
+    beforeSnapshot: jsonb("before_snapshot"),
+    afterSnapshot: jsonb("after_snapshot"),
+  },
+  (table) => [index("catalog_change_items_change_idx").on(table.changeId), index("catalog_change_items_entity_idx").on(table.tableName, table.rowKey)],
+);
+
 export const slugAliases = pgTable(
   "slug_aliases",
   {

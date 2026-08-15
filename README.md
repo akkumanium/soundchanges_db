@@ -39,6 +39,8 @@ Health checks:
 
 ## Operations
 
+All moderator accounts can edit, reorder, and delete catalog content. Administrators additionally manage accounts and can inspect or revert changes at `/moderation/history`. The catalog audit log stores only affected rows (and only changed fields for updates); audit records are append-only, and a revert is recorded as a new change.
+
 Back up the database:
 
 ```sh

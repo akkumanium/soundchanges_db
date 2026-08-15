@@ -1,9 +1,11 @@
-import { and, asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import { revalidateTag, unstable_cache } from "next/cache";
 import { connection } from "next/server";
 import { db } from "./index";
 import {
   examples,
+  catalogChangeItems,
+  catalogChanges,
   lineageNodes,
   moderators,
   revisionEvents,
@@ -190,6 +192,28 @@ export async function getHistory(limit = 100) {
   } catch {
     return [];
   }
+}
+
+export async function getCatalogHistory(limit = 100) {
+  await connection();
+  const changes = await db.select({
+    id: catalogChanges.id,
+    moderatorId: catalogChanges.moderatorId,
+    username: moderators.username,
+    action: catalogChanges.action,
+    summary: catalogChanges.summary,
+    revertsChangeId: catalogChanges.revertsChangeId,
+    createdAt: catalogChanges.createdAt,
+  }).from(catalogChanges).leftJoin(moderators, eq(catalogChanges.moderatorId, moderators.id)).orderBy(desc(catalogChanges.createdAt)).limit(limit);
+  if (!changes.length) return [];
+  const items = await db.select().from(catalogChangeItems).where(inArray(catalogChangeItems.changeId, changes.map((change) => change.id))).orderBy(catalogChangeItems.tableName, catalogChangeItems.rowKey);
+  const revertedIds = new Set(changes.map((change) => change.revertsChangeId).filter((id): id is string => Boolean(id)));
+  return changes.map((change) => ({
+    ...change,
+    username: change.username ?? "Former moderator",
+    reverted: revertedIds.has(change.id),
+    items: items.filter((item) => item.changeId === change.id),
+  }));
 }
 
 export async function resolveSlugAlias(entityType: "lineage" | "transition", oldSlug: string): Promise<string | null> {

@@ -12,7 +12,7 @@ export default async function BrowsePage() {
       {catalog.demo && <DemoNotice />}
       {!catalog.databaseAvailable && <DatabaseNotice />}
       <header className="page-intro page-intro--small"><p className="eyebrow">Sound changes</p><h1>Browse</h1></header>
-      {catalog.databaseAvailable ? <CatalogBrowse entries={catalog.transitions} nodes={catalog.nodes} canEdit={Boolean(moderator)} canDeleteApproved={moderator?.role === "admin"} /> : <p className="empty-state">The catalogue is unavailable.</p>}
+      {catalog.databaseAvailable ? <CatalogBrowse entries={catalog.transitions} nodes={catalog.nodes} canEdit={Boolean(moderator)} canDeleteApproved={Boolean(moderator)} /> : <p className="empty-state">The catalogue is unavailable.</p>}
     </div>
   );
 }
