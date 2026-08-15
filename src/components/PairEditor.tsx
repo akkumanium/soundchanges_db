@@ -4,18 +4,21 @@ import { useState, useTransition } from "react";
 import type { CatalogNode, CatalogTransition } from "@/db/queries";
 import { deletePairAction, editPairAction, movePairAction } from "@/app/moderation/actions";
 
-type Row = { id: string; revision: number; input: string; output: string; environment: string; exceptions: string; exceptionExamples: string; comment: string; examples: string };
-type RuleSnapshot = Omit<Row, "revision"> & { explanation: string };
+type Row = { clientId: string; id: string; revision: number; input: string; output: string; environment: string; exceptions: string; exceptionExamples: string; comment: string; examples: string };
+type RuleSnapshot = Omit<Row, "clientId" | "revision"> & { explanation: string };
+let newRuleId = 0;
 export function PairEditor({ entry, nodes }: { entry: CatalogTransition; nodes: CatalogNode[] }) {
   const [editing, setEditing] = useState(false);
   const [, startMove] = useTransition();
-  const [rows, setRows] = useState<Row[]>(() => entry.rules.map((rule) => ({ id: rule.id, revision: rule.revision, input: rule.input, output: rule.output, environment: rule.environment, exceptions: rule.exceptions, exceptionExamples: rule.exceptionExamples.join(", "), comment: rule.qualifier, examples: rule.examples.map((example) => example.targetForm).join(", ") })));
-  const add = () => setRows((current) => [...current, { id: "", revision: 0, input: "", output: "", environment: "", exceptions: "", exceptionExamples: "", comment: "", examples: "" }]);
-  const moveRule = (index: number, direction: "up" | "down") => setRows((current) => {
-    const target = index + (direction === "up" ? -1 : 1);
-    if (target < 0 || target >= current.length) return current;
+  const [draggedRule, setDraggedRule] = useState<number | null>(null);
+  const [draggedOverRule, setDraggedOverRule] = useState<number | null>(null);
+  const [rows, setRows] = useState<Row[]>(() => entry.rules.map((rule) => ({ clientId: rule.id, id: rule.id, revision: rule.revision, input: rule.input, output: rule.output, environment: rule.environment, exceptions: rule.exceptions, exceptionExamples: rule.exceptionExamples.join(", "), comment: rule.qualifier, examples: rule.examples.map((example) => example.targetForm).join(", ") })));
+  const add = () => setRows((current) => [...current, { clientId: `new-rule-${newRuleId++}`, id: "", revision: 0, input: "", output: "", environment: "", exceptions: "", exceptionExamples: "", comment: "", examples: "" }]);
+  const reorderRule = (index: number, target: number) => setRows((current) => {
+    if (index === target || index < 0 || target < 0 || index >= current.length || target >= current.length) return current;
     const reordered = [...current];
-    [reordered[index], reordered[target]] = [reordered[target], reordered[index]];
+    const [moved] = reordered.splice(index, 1);
+    reordered.splice(target, 0, moved);
     return reordered;
   });
   const move = (direction: "up" | "down") => startMove(() => { const data = new FormData(); data.set("transitionId", entry.id); data.set("direction", direction); return movePairAction(data); });
@@ -27,9 +30,27 @@ export function PairEditor({ entry, nodes }: { entry: CatalogTransition; nodes: 
     <div className="pair-editor__move"><span>Pair order</span><button type="button" onClick={() => move("up")}>↑</button><button type="button" onClick={() => move("down")}>↓</button></div>
     <div className="pair-editor__names"><label>From<input name="sourceName" list={languageListId} required defaultValue={entry.sourceName} /></label><span>→</span><label>To<input name="targetName" list={languageListId} required defaultValue={entry.targetName} /></label></div><datalist id={languageListId}>{nodes.map((node) => <option key={node.id} value={node.name} />)}</datalist>
     <label className="pair-editor__source">Source citation<input name="sourceCitation" defaultValue={entry.sources[0]?.displayCitation ?? ""} placeholder="Author, year, title" /></label>
-    <div className="pair-editor__rows">{rows.map((row, index) => <div className="rule-fields" key={`${row.id}-${index}`}>
+    <div className="pair-editor__rows">{rows.map((row, index) => <div
+      className={`rule-fields${draggedRule === index ? " rule-fields--dragging" : ""}${draggedOverRule === index && draggedRule !== index ? " rule-fields--drag-over" : ""}`}
+      key={row.clientId}
+      onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "move"; setDraggedOverRule(index); }}
+      onDrop={(event) => { event.preventDefault(); const source = draggedRule ?? Number(event.dataTransfer.getData("text/plain")); reorderRule(source, index); setDraggedRule(null); setDraggedOverRule(null); }}
+    >
       <input type="hidden" name="ruleId" value={row.id} /><input type="hidden" name="ruleRevision" value={row.revision} />
-      <div className="rule-fields__order" aria-label={`Move sound change ${index + 1}`}><button type="button" onClick={() => moveRule(index, "up")} disabled={index === 0} aria-label="Move sound change up">↑</button><button type="button" onClick={() => moveRule(index, "down")} disabled={index === rows.length - 1} aria-label="Move sound change down">↓</button></div>
+      <button
+        type="button"
+        className="rule-fields__drag-handle"
+        draggable
+        aria-label={`Drag sound change ${index + 1} to reorder`}
+        title="Drag to reorder. Use the arrow keys for keyboard reordering."
+        onDragStart={(event) => { event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", String(index)); setDraggedRule(index); }}
+        onDragEnd={() => { setDraggedRule(null); setDraggedOverRule(null); }}
+        onKeyDown={(event) => {
+          if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+          event.preventDefault();
+          reorderRule(index, index + (event.key === "ArrowUp" ? -1 : 1));
+        }}
+      >⠿</button>
       <input name="input" aria-label="Proto sound" required value={row.input} onChange={(event) => update(index, "input", event.target.value, setRows)} placeholder="p" /><span>→</span><input name="output" aria-label="Resulting sound" required value={row.output} onChange={(event) => update(index, "output", event.target.value, setRows)} placeholder="f" />
       <span>/</span><input name="environment" aria-label="Environment" value={row.environment} onChange={(event) => update(index, "environment", event.target.value, setRows)} placeholder="V_V" /><span>/ !</span><input name="exceptions" aria-label="Exceptions" value={row.exceptions} onChange={(event) => update(index, "exceptions", event.target.value, setRows)} placeholder="exceptions" />
       <span>/</span><input name="exceptionExamples" aria-label="Exception examples" value={row.exceptionExamples} onChange={(event) => update(index, "exceptionExamples", event.target.value, setRows)} placeholder="exception words" /><span>/</span><input name="comment" aria-label="Comment" value={row.comment} onChange={(event) => update(index, "comment", event.target.value, setRows)} placeholder="comment" /><span>/</span><input name="examples" aria-label="Examples" value={row.examples} onChange={(event) => update(index, "examples", event.target.value, setRows)} placeholder="examples, comma-separated" />
