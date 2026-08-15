@@ -5,7 +5,7 @@ import { PairCreator } from "./PairCreator";
 
 type BrowseTocItem = { entry: CatalogTransition; number: string; children: BrowseTocItem[] };
 
-export function CatalogBrowse({ entries, nodes, canEdit, canDeleteApproved = false }: { entries: CatalogTransition[]; nodes: CatalogNode[]; canEdit: boolean; canDeleteApproved?: boolean }) {
+export function CatalogBrowse({ entries, nodes, canEdit }: { entries: CatalogTransition[]; nodes: CatalogNode[]; canEdit: boolean }) {
   const nodeMap = new Map(nodes.map((node) => [node.id, node]));
   const numberedEntries = entries.map((entry) => ({ entry, number: numberForEntry(entry, entries, nodeMap) })).sort((a, b) => compareNumbers(a.number, b.number));
   const tocItems = buildBrowseToc(numberedEntries, entries);
@@ -16,9 +16,9 @@ export function CatalogBrowse({ entries, nodes, canEdit, canDeleteApproved = fal
     </nav>}
     <section className="catalog-browse" aria-label="Sound-change catalogue">{canEdit && <PairCreator />}{entries.length === 0 && !canEdit && <p className="empty-state">No entries yet.</p>}
     {numberedEntries.map(({ entry, number }) => { return <article className="browse-entry" id={`pair-${entry.slug}`} key={entry.id}>
-      <h2><span className="pair-number">{number}</span><span className={`pair-name${entry.sourceApprovalStatus === "pending" ? " pending-addition" : ""}`}>{entry.sourceName}</span> <span className="pair-arrow">→</span> <span className={`pair-name${entry.targetApprovalStatus === "pending" ? " pending-addition" : ""}`}>{entry.targetName}</span>{(entry.sourceApprovalStatus === "pending" || entry.targetApprovalStatus === "pending") && <span className="pending-label">Pending review</span>}</h2>
+      <h2><span className="pair-number">{number}</span><span className="pair-name">{entry.sourceName}</span> <span className="pair-arrow">→</span> <span className="pair-name">{entry.targetName}</span></h2>
       {entry.sources[0] && <p className="browse-citation">{entry.sources[0].displayCitation}</p>}
-      <EntryView entry={entry} nodes={nodes} canEdit={canEdit} canDeleteApproved={canDeleteApproved} />
+      <EntryView entry={entry} nodes={nodes} canEdit={canEdit} />
     </article>; })}
     </section>
   </>;

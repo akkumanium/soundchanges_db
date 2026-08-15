@@ -228,12 +228,6 @@ pre.diff { overflow: auto; padding: 1rem; border: 1px solid var(--line); backgro
 .dialog-close { width: 1.65rem; height: 1.65rem; padding: 0; border: 0; color: var(--ink); background: transparent; font-size: 1.4rem; }
 .dialog-close:hover { color: var(--ink); background: #dcecff; }
 
-/* New moderator additions stay visibly provisional until an administrator decides. */
-.pending-addition, .rule--pending .rule-notation, .search-result--pending .match-rule { color: var(--review-red) !important; }
-.pending-label { display: inline-block; margin-left: .35rem; padding: .1rem .38rem; border: 1px solid #d6a09b; color: var(--review-red) !important; background: var(--review-red-soft); font-family: var(--font-sans), sans-serif; font-size: .6rem; font-weight: 800; line-height: 1.35; letter-spacing: .06em; text-transform: uppercase; vertical-align: middle; }
-.rule--pending { margin-inline: -.55rem; padding-inline: .55rem !important; border-left: 2px solid var(--review-red) !important; background: linear-gradient(90deg, rgba(165,45,45,.055), transparent 60%); }
-.search-result--pending { border-left: 2px solid var(--review-red); padding-left: .8rem; }
-
 .review-page { padding-top: 3.5rem; }
 .review-hero { display: flex; align-items: flex-end; justify-content: space-between; gap: 2rem; margin-bottom: 4rem; padding: 2.2rem; color: #f9f7ef; background: #202925; }
 .review-hero h1 { margin: .15rem 0 .6rem; font-family: var(--font-serif), serif; font-size: clamp(2.4rem, 5vw, 4.25rem); font-weight: 560; line-height: 1; letter-spacing: -.04em; }

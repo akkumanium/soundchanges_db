@@ -1,18 +1,17 @@
 import type { CatalogExample, CatalogNode, CatalogRule, CatalogTransition } from "@/db/queries";
 import { PairEditor } from "./PairEditor";
 
-type Props = { entry: CatalogTransition; nodes?: CatalogNode[]; compact?: boolean; canEdit?: boolean; canDeleteApproved?: boolean };
+type Props = { entry: CatalogTransition; nodes?: CatalogNode[]; compact?: boolean; canEdit?: boolean };
 
-export function EntryView({ entry, nodes = [], canEdit = false, canDeleteApproved = false }: Props) {
+export function EntryView({ entry, nodes = [], canEdit = false }: Props) {
   return <article className="entry">
     <ol className="rule-list">{entry.rules.map((rule) => <RuleView key={rule.id} rule={rule} />)}</ol>
-    {canEdit && <PairEditor entry={entry} nodes={nodes} canDeleteApproved={canDeleteApproved} />}
+    {canEdit && <PairEditor entry={entry} nodes={nodes} />}
   </article>;
 }
 
 function RuleView({ rule }: { rule: CatalogRule }) {
-  return <li className={`rule${rule.approvalStatus === "pending" ? " rule--pending" : ""}`}><div className="rule-heading"><span className="rule-notation">{rule.displayNotation}</span>
-    {rule.approvalStatus === "pending" && <span className="pending-label">Pending review</span>}
+  return <li className="rule"><div className="rule-heading"><span className="rule-notation">{rule.displayNotation}</span>
     {rule.exceptionExamples.length > 0 && <WordDisclosure label="Exceptions" words={rule.exceptionExamples} />}
     {rule.examples.length > 0 && <details className="examples-disclosure"><summary>Examples</summary><div className="examples-list">{rule.examples.map((example) => <ExampleView key={example.id} example={example} />)}</div></details>}
   </div>{rule.explanation && <p className="rule-explanation">{rule.explanation}</p>}</li>;

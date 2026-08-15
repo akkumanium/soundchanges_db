@@ -1,7 +1,7 @@
 "use server";
 
 import { headers } from "next/headers";
-import { and, eq, sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { db } from "@/db";
@@ -119,8 +119,8 @@ export async function editPairAction(formData: FormData) {
     await tx.execute(sql`select id from ${soundChanges} where ${soundChanges.transitionId} = ${transitionId} for update`);
     const [transition] = await tx.select().from(transitions).where(eq(transitions.id, transitionId));
     if (!transition) throw new Error("This language pair no longer exists.");
-    const sourceResult = await findOrCreateNodeInTransaction(tx, sourceName, moderator);
-    const targetResult = await findOrCreateNodeInTransaction(tx, targetName, moderator);
+    const sourceResult = await findOrCreateNodeInTransaction(tx, sourceName);
+    const targetResult = await findOrCreateNodeInTransaction(tx, targetName);
     const sourceChanged = transition.sourceNodeId !== sourceResult.node.id;
     const targetChanged = transition.targetNodeId !== targetResult.node.id;
     if (sourceChanged || targetChanged) {
@@ -160,7 +160,7 @@ export async function editPairAction(formData: FormData) {
         }
       } else {
         const data = ruleData(submitted, index, "");
-        const [created] = await tx.insert(soundChanges).values({ transitionId, ...data, ...reviewFields(moderator) }).returning(); ruleId = created.id;
+        const [created] = await tx.insert(soundChanges).values({ transitionId, ...data }).returning(); ruleId = created.id;
         if (submitted.words.length) await tx.insert(examples).values(submitted.words.map((targetForm, sortOrder) => ({ soundChangeId: ruleId, sourceForm: targetForm, targetForm, targetWiktionaryUrl: `https://en.wiktionary.org/wiki/${encodeURIComponent(targetForm)}`, sortOrder })));
         changed = true;
       }
@@ -264,8 +264,8 @@ export async function addPairAction(formData: FormData) {
   const existingPairs = await db.select({ id: transitions.id }).from(transitions);
   await auditedCatalogMutation(moderator.id, "create", "Added language pair", async (tx) => {
     if (existingPairs.length === 0) await pruneUnusedStages(tx);
-    const sourceResult = await findOrCreateNodeInTransaction(tx, sourceName, moderator);
-    const targetResult = await findOrCreateNodeInTransaction(tx, targetName, moderator);
+    const sourceResult = await findOrCreateNodeInTransaction(tx, sourceName);
+    const targetResult = await findOrCreateNodeInTransaction(tx, targetName);
     const source = sourceResult.node; const target = targetResult.node;
     await placeStagesForPairInTransaction(tx, source.id, target.id, sourceResult.created);
     const title = `${source.name} to ${target.name}`; const slug = `${slugify(title)}-${Date.now().toString(36)}`;
@@ -276,10 +276,10 @@ export async function addPairAction(formData: FormData) {
   revalidatePath("/browse"); revalidatePath("/search");
 }
 
-async function findOrCreateNodeInTransaction(tx: Parameters<Parameters<typeof db.transaction>[0]>[0], name: string, moderator: Awaited<ReturnType<typeof requireModerator>>): Promise<{ node: typeof lineageNodes.$inferSelect; created: boolean }> {
+async function findOrCreateNodeInTransaction(tx: Parameters<Parameters<typeof db.transaction>[0]>[0], name: string): Promise<{ node: typeof lineageNodes.$inferSelect; created: boolean }> {
   const [existing] = await tx.select().from(lineageNodes).where(eq(lineageNodes.name, name)).limit(1);
   if (existing) return { node: existing, created: false };
-  const [created] = await tx.insert(lineageNodes).values({ name, slug: `${slugify(name) || "stage"}-${Date.now().toString(36)}`, kind: "stage", sortOrder: (await tx.select({ id: lineageNodes.id }).from(lineageNodes)).length, ...reviewFields(moderator) }).returning();
+  const [created] = await tx.insert(lineageNodes).values({ name, slug: `${slugify(name) || "stage"}-${Date.now().toString(36)}`, kind: "stage", sortOrder: (await tx.select({ id: lineageNodes.id }).from(lineageNodes)).length }).returning();
   return { node: created, created: true };
 }
 
@@ -327,30 +327,6 @@ export async function toggleModeratorAction(formData: FormData) {
   const disabled = formData.get("disabled") === "true";
   await db.update(moderators).set({ disabled, updatedAt: new Date() }).where(eq(moderators.id, id));
   revalidatePath("/moderation/accounts");
-}
-
-export async function reviewCatalogItemAction(formData: FormData) {
-  const moderator = await requireModerator();
-  if (moderator.role !== "admin") throw new Error("Administrator access is required.");
-  const entityType = String(formData.get("entityType") ?? "");
-  const entityId = String(formData.get("entityId") ?? "");
-  const decision = String(formData.get("decision") ?? "");
-  if (!entityId || (entityType !== "language" && entityType !== "sound_change") || (decision !== "approved" && decision !== "rejected")) throw new Error("Invalid review decision.");
-  await auditedCatalogMutation(moderator.id, decision === "approved" ? "approve" : "reject", `${decision === "approved" ? "Approved" : "Rejected"} ${entityType === "language" ? "language" : "sound change"}`, async (tx) => {
-    const table = entityType === "language" ? lineageNodes : soundChanges;
-    const [before] = await tx.select().from(table).where(and(eq(table.id, entityId), eq(table.approvalStatus, "pending"))).limit(1);
-    if (!before) throw new Error("This item has already been reviewed or no longer exists.");
-    await tx.update(table).set({ approvalStatus: decision, reviewedBy: moderator.id, reviewedAt: new Date(), revision: sql`${table.revision} + 1`, updatedAt: new Date() }).where(and(eq(table.id, entityId), eq(table.approvalStatus, "pending")));
-  });
-  revalidateCatalog();
-  revalidatePath("/moderation/review");
-  revalidatePath("/browse");
-  revalidatePath("/search");
-}
-
-function reviewFields(moderator: Awaited<ReturnType<typeof requireModerator>>) {
-  void moderator;
-  return { approvalStatus: "approved" as const };
 }
 
 export async function revertCatalogChangeAction(formData: FormData) {
