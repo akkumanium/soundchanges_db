@@ -160,7 +160,17 @@ details > summary { cursor: pointer; }
 .history-entry summary { cursor: pointer; color: var(--accent); font-weight: 700; }
 .history-entry footer { display: flex; justify-content: flex-end; margin-top: .8rem; }
 .history-items { display: grid; gap: .7rem; margin-top: .7rem; }
-.history-items h3 { margin: 0; font-size: .78rem; text-transform: capitalize; }
+.history-item { overflow: hidden; border: 1px solid var(--line); background: var(--paper); }
+.history-item > header { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; padding: .7rem .8rem; }
+.history-items h3 { margin: 0; font-family: var(--font-serif), serif; font-size: .95rem; }
+.history-operation { flex: 0 0 auto; color: var(--muted); font-size: .66rem; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; }
+.history-operation--created { color: var(--good); }
+.history-operation--deleted { color: var(--review-red); }
+.history-diff { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: .78rem; }
+.history-diff th, .history-diff td { padding: .55rem .8rem; border-top: 1px solid var(--line); text-align: left; vertical-align: top; overflow-wrap: anywhere; }
+.history-diff thead th { color: var(--muted); font-size: .65rem; letter-spacing: .05em; text-transform: uppercase; }
+.history-diff th:first-child { width: 22%; }
+.history-diff tbody th { font-weight: 700; }
 .site-footer { width: min(1180px, calc(100% - 2rem)); margin: auto; padding: 2rem 0 3rem; border-top: 1px solid var(--line); display: flex; justify-content: space-between; gap: 2rem; color: var(--muted); font-size: .78rem; }
 .site-footer p { margin: .15rem 0; }
 .site-footer nav { align-items: flex-start; }
