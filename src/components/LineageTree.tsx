@@ -1,11 +1,12 @@
-import type { CatalogNode, CatalogTransition } from "@/db/queries";
+import type { Catalog, CatalogNode, CatalogTransition } from "@/db/queries";
 import type { ReactNode } from "react";
 import { EntryView } from "./EntryView";
 import { PairCreator } from "./PairCreator";
+import { deletedRulesForTransition, deletedTransitions, historicalNodeName, InlineReview, reviewClass, snapshotText, transitionReviewTargets, type BrowseChange } from "./BrowseInlineReview";
 
 type BrowseTocItem = { entry: CatalogTransition; number: string; children: BrowseTocItem[] };
 
-export function CatalogBrowse({ entries, nodes, canEdit }: { entries: CatalogTransition[]; nodes: CatalogNode[]; canEdit: boolean }) {
+export function CatalogBrowse({ entries, nodes, canEdit, catalog, reviewChanges = [] }: { entries: CatalogTransition[]; nodes: CatalogNode[]; canEdit: boolean; catalog: Catalog; reviewChanges?: BrowseChange[] }) {
   const nodeMap = new Map(nodes.map((node) => [node.id, node]));
   const numberedEntries = entries.map((entry) => ({ entry, number: numberForEntry(entry, entries, nodeMap) })).sort((a, b) => compareNumbers(a.number, b.number));
   const tocItems = buildBrowseToc(numberedEntries, entries);
@@ -15,11 +16,21 @@ export function CatalogBrowse({ entries, nodes, canEdit }: { entries: CatalogTra
       <BrowseTocList items={tocItems} />
     </nav>}
     <section className="catalog-browse" aria-label="Sound-change catalogue">{canEdit && <PairCreator />}{entries.length === 0 && !canEdit && <p className="empty-state">No entries yet.</p>}
-    {numberedEntries.map(({ entry, number }) => { return <article className="browse-entry" id={`pair-${entry.slug}`} key={entry.id}>
+    {numberedEntries.map(({ entry, number }) => { const targets = transitionReviewTargets(entry, reviewChanges); return <article className={`browse-entry ${reviewClass(targets)}`} id={`pair-${entry.slug}`} key={entry.id}>
       <h2><span className="pair-number">{number}</span><span className="pair-name">{entry.sourceName}</span> <span className="pair-arrow">→</span> <span className="pair-name">{entry.targetName}</span></h2>
       {entry.sources[0] && <p className="browse-citation">{entry.sources[0].displayCitation}</p>}
-      <EntryView entry={entry} nodes={nodes} canEdit={canEdit} />
+      <InlineReview targets={targets} catalog={catalog} />
+      <EntryView entry={entry} nodes={nodes} canEdit={canEdit} reviewChanges={reviewChanges} catalog={catalog} deletedRules={deletedRulesForTransition(entry.id, reviewChanges)} />
     </article>; })}
+    {deletedTransitions(reviewChanges).map(({ change, item, snapshot }) => {
+      const source = nodes.find((node) => node.id === snapshot.sourceNodeId)?.name ?? historicalNodeName(snapshot.sourceNodeId, reviewChanges, "Deleted language");
+      const target = nodes.find((node) => node.id === snapshot.targetNodeId)?.name ?? historicalNodeName(snapshot.targetNodeId, reviewChanges, "Deleted language");
+      return <article className="browse-entry inline-change inline-change--deleted" key={`${change.id}-${item.id}`}>
+        <h2><span className="pair-number">—</span><del>{source} <span className="pair-arrow">→</span> {target}</del></h2>
+        <InlineReview targets={[{ change, items: [item] }]} catalog={catalog} suppressDiff />
+        <ol className="rule-list">{deletedRulesForTransition(String(snapshot.id ?? item.rowKey), [change]).map((rule) => <li className="rule" key={rule.item.id}><span className="rule-notation"><del>{snapshotText(rule.snapshot, "displayNotation", "Deleted sound change")}</del></span></li>)}</ol>
+      </article>;
+    })}
     </section>
   </>;
 }

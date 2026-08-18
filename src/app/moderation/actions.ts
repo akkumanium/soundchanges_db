@@ -350,6 +350,21 @@ export async function verifyCatalogChangeAction(formData: FormData) {
   revalidatePath("/browse");
 }
 
+export async function discardCatalogChangeAction(formData: FormData) {
+  const moderator = await requireModerator();
+  if (moderator.role !== "admin") throw new Error("Administrator access is required.");
+  const changeId = String(formData.get("changeId") ?? "");
+  if (!changeId) throw new Error("Invalid history entry.");
+  await revertCatalogChange(changeId, moderator.id);
+  const [reversion] = await db.select({ id: catalogChanges.id }).from(catalogChanges).where(eq(catalogChanges.revertsChangeId, changeId)).limit(1);
+  await db.insert(catalogChangeVerifications).values([
+    { changeId, moderatorId: moderator.id },
+    ...(reversion ? [{ changeId: reversion.id, moderatorId: moderator.id }] : []),
+  ]).onConflictDoNothing();
+  revalidateCatalog();
+  revalidatePath("/"); revalidatePath("/browse"); revalidatePath("/search"); revalidatePath("/moderation/history");
+}
+
 export async function verifyAllCatalogChangesAction() {
   const moderator = await requireModerator();
   if (moderator.role !== "admin") throw new Error("Administrator access is required.");

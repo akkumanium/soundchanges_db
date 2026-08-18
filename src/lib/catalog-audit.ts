@@ -55,7 +55,6 @@ export async function auditedCatalogMutation<T>(
 export async function revertCatalogChange(changeId: string, moderatorId: string): Promise<void> {
   const [change] = await db.select().from(catalogChanges).where(eq(catalogChanges.id, changeId)).limit(1);
   if (!change) throw new Error("This history entry does not exist.");
-  if (change.revertsChangeId) throw new Error("Revert entries cannot themselves be reverted. Revert the resulting catalog edit instead.");
   const [alreadyReverted] = await db.select({ id: catalogChanges.id }).from(catalogChanges).where(eq(catalogChanges.revertsChangeId, changeId)).limit(1);
   if (alreadyReverted) throw new Error("This change has already been reverted.");
   const items = (await db.select().from(catalogChangeItems).where(eq(catalogChangeItems.changeId, changeId))) as Array<typeof catalogChangeItems.$inferSelect & SnapshotItem>;
