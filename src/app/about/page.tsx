@@ -20,7 +20,7 @@ export default function AboutPage() {
           <p className="eyebrow">Want to contribute?</p>
           <h2 id="contribute-heading">Help shape the corpus.</h2>
         </div>
-        <a className="discord-button" href="#">
+        <a className="discord-button" href="https://discord.gg/enKKuKJruc">
           Join Discord <span aria-hidden="true">↗</span>
         </a>
       </aside>
