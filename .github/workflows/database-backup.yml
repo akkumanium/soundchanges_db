@@ -1,0 +1,93 @@
+name: Database backup
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+      timezone: "Asia/Qyzylorda"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: database-backup
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    name: Back up Neon to R2
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    env:
+      DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: auto
+      R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+      R2_BUCKET: ${{ secrets.R2_BUCKET }}
+
+    steps:
+      - name: Create PostgreSQL dump
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          timestamp="$(date -u +'%Y-%m-%dT%H-%M-%SZ')"
+          backup_name="casc-${timestamp}.dump"
+
+          mkdir -p backup
+
+          docker run --rm \
+            -e DATABASE_URL \
+            -e BACKUP_NAME="$backup_name" \
+            -v "$PWD/backup:/backup" \
+            postgres:17-alpine \
+            sh -c 'pg_dump "$DATABASE_URL" \
+              --format=custom \
+              --no-owner \
+              --no-acl \
+              --file="/backup/$BACKUP_NAME"'
+
+          echo "BACKUP_NAME=$backup_name" >> "$GITHUB_ENV"
+
+      - name: Validate dump
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          docker run --rm \
+            -e BACKUP_NAME \
+            -v "$PWD/backup:/backup:ro" \
+            postgres:17-alpine \
+            sh -c 'pg_restore --list "/backup/$BACKUP_NAME" >/dev/null'
+
+          (
+            cd backup
+            sha256sum "$BACKUP_NAME" > "$BACKUP_NAME.sha256"
+          )
+
+      - name: Upload to private R2 bucket
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          aws s3 cp \
+            "backup/$BACKUP_NAME" \
+            "s3://$R2_BUCKET/daily/$BACKUP_NAME" \
+            --endpoint-url "$R2_ENDPOINT" \
+            --only-show-errors
+
+          aws s3 cp \
+            "backup/$BACKUP_NAME.sha256" \
+            "s3://$R2_BUCKET/daily/$BACKUP_NAME.sha256" \
+            --endpoint-url "$R2_ENDPOINT" \
+            --only-show-errors
+
+          aws s3api head-object \
+            --bucket "$R2_BUCKET" \
+            --key "daily/$BACKUP_NAME" \
+            --endpoint-url "$R2_ENDPOINT" \
+            >/dev/null
+
+          echo "Uploaded daily/$BACKUP_NAME"
