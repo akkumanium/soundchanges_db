@@ -43,6 +43,13 @@
       "when": 1786838400000,
       "tag": "0005_retire_pending_review",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1787040000000,
+      "tag": "0006_add_catalog_change_verifications",
+      "breakpoints": true
     }
   ]
 }

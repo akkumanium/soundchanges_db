@@ -222,6 +222,16 @@ export const catalogChangeItems = pgTable(
   (table) => [index("catalog_change_items_change_idx").on(table.changeId), index("catalog_change_items_entity_idx").on(table.tableName, table.rowKey)],
 );
 
+export const catalogChangeVerifications = pgTable(
+  "catalog_change_verifications",
+  {
+    changeId: uuid("change_id").primaryKey().references(() => catalogChanges.id, { onDelete: "restrict" }),
+    moderatorId: uuid("moderator_id").references(() => moderators.id, { onDelete: "set null" }),
+    verifiedAt: timestamp("verified_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("catalog_change_verifications_moderator_idx").on(table.moderatorId)],
+);
+
 export const slugAliases = pgTable(
   "slug_aliases",
   {

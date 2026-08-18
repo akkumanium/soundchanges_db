@@ -13,8 +13,17 @@ export default function AboutPage() {
         CASC is still in early beta. Its data, structure, and presentation are actively being developed, and some entries may contain errors, incomplete information, or inconsistent formatting.
       </p>
       <p>
-        The corpus is open to contributions. Anyone can help by adding attested sound changes, providing reliable sources, correcting mistakes, improving existing entries, or suggesting changes to the project’s structure and documentation.
+        The corpus is open to contributions. Anyone can help by providing reliable sources, correcting mistakes, improving existing entries, or suggesting changes to the project’s structure and documentation.
       </p>
+      <aside className="contribute-callout" aria-labelledby="contribute-heading">
+        <div>
+          <p className="eyebrow">Want to contribute?</p>
+          <h2 id="contribute-heading">Help shape the corpus.</h2>
+        </div>
+        <a className="discord-button" href="#">
+          Join Discord <span aria-hidden="true">↗</span>
+        </a>
+      </aside>
     </div>
   );
 }

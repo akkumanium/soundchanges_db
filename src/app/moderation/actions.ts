@@ -6,7 +6,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { db } from "@/db";
 import { revalidateCatalog } from "@/db/queries";
-import { examples, lineageNodes, moderators, soundChanges, sources, transitionSources, transitions } from "@/db/schema";
+import { catalogChanges, catalogChangeVerifications, examples, lineageNodes, moderators, soundChanges, sources, transitionSources, transitions } from "@/db/schema";
 import { applyModeratorOperations } from "@/lib/apply-proposal";
 import { authenticate, createSession, destroySession, passwordHash, requireModerator } from "@/lib/auth";
 import { parseOperations } from "@/lib/proposals";
@@ -337,4 +337,25 @@ export async function revertCatalogChangeAction(formData: FormData) {
   await revertCatalogChange(changeId, moderator.id);
   revalidateCatalog();
   revalidatePath("/"); revalidatePath("/browse"); revalidatePath("/search"); revalidatePath("/moderation/history");
+}
+
+export async function verifyCatalogChangeAction(formData: FormData) {
+  const moderator = await requireModerator();
+  if (moderator.role !== "admin") throw new Error("Administrator access is required.");
+  const changeId = String(formData.get("changeId") ?? "");
+  if (!changeId) throw new Error("Invalid history entry.");
+  const [change] = await db.select({ id: catalogChanges.id }).from(catalogChanges).where(eq(catalogChanges.id, changeId)).limit(1);
+  if (!change) throw new Error("This history entry does not exist.");
+  await db.insert(catalogChangeVerifications).values({ changeId, moderatorId: moderator.id }).onConflictDoNothing();
+  revalidatePath("/browse");
+}
+
+export async function verifyAllCatalogChangesAction() {
+  const moderator = await requireModerator();
+  if (moderator.role !== "admin") throw new Error("Administrator access is required.");
+  const changes = await db.select({ id: catalogChanges.id }).from(catalogChanges)
+    .leftJoin(catalogChangeVerifications, eq(catalogChanges.id, catalogChangeVerifications.changeId))
+    .where(sql`${catalogChangeVerifications.changeId} is null`);
+  if (changes.length) await db.insert(catalogChangeVerifications).values(changes.map((change) => ({ changeId: change.id, moderatorId: moderator.id }))).onConflictDoNothing();
+  revalidatePath("/browse");
 }

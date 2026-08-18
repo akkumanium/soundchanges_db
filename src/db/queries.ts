@@ -1,10 +1,11 @@
-import { and, asc, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
 import { revalidateTag, unstable_cache } from "next/cache";
 import { connection } from "next/server";
 import { db } from "./index";
 import {
   examples,
   catalogChangeItems,
+  catalogChangeVerifications,
   catalogChanges,
   lineageNodes,
   moderators,
@@ -156,9 +157,9 @@ export async function getHistory(limit = 100) {
   }
 }
 
-export async function getCatalogHistory(limit = 100) {
+export async function getCatalogHistory(limit?: number, unverifiedOnly = false) {
   await connection();
-  const changes = await db.select({
+  const historyQuery = db.select({
     id: catalogChanges.id,
     moderatorId: catalogChanges.moderatorId,
     username: moderators.username,
@@ -166,7 +167,12 @@ export async function getCatalogHistory(limit = 100) {
     summary: catalogChanges.summary,
     revertsChangeId: catalogChanges.revertsChangeId,
     createdAt: catalogChanges.createdAt,
-  }).from(catalogChanges).leftJoin(moderators, eq(catalogChanges.moderatorId, moderators.id)).orderBy(desc(catalogChanges.createdAt)).limit(limit);
+  }).from(catalogChanges)
+    .leftJoin(moderators, eq(catalogChanges.moderatorId, moderators.id))
+    .leftJoin(catalogChangeVerifications, eq(catalogChanges.id, catalogChangeVerifications.changeId))
+    .where(unverifiedOnly ? isNull(catalogChangeVerifications.changeId) : undefined)
+    .orderBy(desc(catalogChanges.createdAt));
+  const changes = limit === undefined ? await historyQuery : await historyQuery.limit(limit);
   if (!changes.length) return [];
   const items = await db.select().from(catalogChangeItems).where(inArray(catalogChangeItems.changeId, changes.map((change) => change.id))).orderBy(catalogChangeItems.tableName, catalogChangeItems.rowKey);
   const revertedIds = new Set(changes.map((change) => change.revertsChangeId).filter((id): id is string => Boolean(id)));
