@@ -1,7 +1,7 @@
 "use server";
 
 import { headers } from "next/headers";
-import { eq, sql } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { db } from "@/db";
@@ -237,8 +237,23 @@ export async function movePairAction(formData: FormData) {
   const list = await db.select().from(transitions).orderBy(transitions.sortOrder, transitions.title);
   const index = list.findIndex((entry) => entry.id === id); const swapIndex = index + (direction === "up" ? -1 : 1);
   if (index < 0 || swapIndex < 0 || swapIndex >= list.length) return;
-  [list[index], list[swapIndex]] = [list[swapIndex], list[index]];
-  await auditedCatalogMutation(moderator.id, "reorder", "Reordered language pairs", async (tx) => { for (const [order, entry] of list.entries()) await tx.update(transitions).set({ sortOrder: order, updatedAt: new Date() }).where(eq(transitions.id, entry.id)); });
+  const current = list[index];
+  const adjacent = list[swapIndex];
+  await auditedCatalogMutation(moderator.id, "reorder", "Reordered language pairs", async (tx) => {
+    // Legacy imports can contain duplicate sort positions. Normalize those once
+    // so a swap between tied rows is visible; subsequent moves touch two rows.
+    if (new Set(list.map((entry) => entry.sortOrder)).size !== list.length) {
+      [list[index], list[swapIndex]] = [list[swapIndex], list[index]];
+      for (const [sortOrder, entry] of list.entries()) {
+        await tx.update(transitions).set({ sortOrder, updatedAt: new Date() }).where(eq(transitions.id, entry.id));
+      }
+      return;
+    }
+    await tx.update(transitions).set({
+      sortOrder: sql`case when ${transitions.id} = ${current.id} then ${adjacent.sortOrder} else ${current.sortOrder} end`,
+      updatedAt: new Date(),
+    }).where(inArray(transitions.id, [current.id, adjacent.id]));
+  });
   revalidateCatalog();
   revalidatePath("/browse");
 }

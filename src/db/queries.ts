@@ -121,7 +121,9 @@ const loadCachedCatalog = unstable_cache(
     };
   },
   ["catalog"],
-  { revalidate: 3600, tags: [CATALOG_CACHE_TAG] },
+  // Catalog mutations invalidate this tag explicitly. A daily fallback keeps
+  // out-of-band SQL/import edits from remaining stale indefinitely.
+  { revalidate: 86_400, tags: [CATALOG_CACHE_TAG] },
 );
 
 export async function getCatalog(): Promise<Catalog> {

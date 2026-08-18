@@ -17,6 +17,8 @@ export type CatalogTransaction = Parameters<Parameters<typeof db.transaction>[0]
 type SnapshotRow = Record<string, unknown>;
 type SnapshotItem = { tableName: TableName; rowKey: string; beforeSnapshot: SnapshotRow | null; afterSnapshot: SnapshotRow | null };
 type TableName = keyof typeof tableOrder;
+type DatabaseSnapshotRow = { tableName: TableName; rowKey: string; snapshot: Record<string, unknown> };
+type DatabaseSnapshotDelta = { tableName: TableName; rowKey: string; beforeSnapshot: Record<string, unknown> | null; afterSnapshot: Record<string, unknown> | null };
 
 const tableOrder = {
   lineage_nodes: 0,
@@ -29,6 +31,20 @@ const tableOrder = {
   slug_aliases: 7,
 } as const;
 
+// Keep full snapshots inside Postgres. Only rows that actually changed cross
+// the Neon proxy, which preserves complete audit/revert data without fetching
+// the entire catalogue twice for every edit.
+const catalogRowsSql = sql`
+  select 'lineage_nodes'::text as table_name, id::text as row_key, to_jsonb(lineage_nodes) as snapshot from lineage_nodes
+  union all select 'transitions', id::text, to_jsonb(transitions) from transitions
+  union all select 'sound_changes', id::text, to_jsonb(sound_changes) from sound_changes
+  union all select 'sources', id::text, to_jsonb(sources) from sources
+  union all select 'examples', id::text, to_jsonb(examples) from examples
+  union all select 'transition_sources', transition_id::text || ':' || source_id::text, to_jsonb(transition_sources) from transition_sources
+  union all select 'sound_change_sources', sound_change_id::text || ':' || source_id::text, to_jsonb(sound_change_sources) from sound_change_sources
+  union all select 'slug_aliases', id::text, to_jsonb(slug_aliases) from slug_aliases
+`;
+
 export async function auditedCatalogMutation<T>(
   moderatorId: string,
   action: string,
@@ -40,10 +56,9 @@ export async function auditedCatalogMutation<T>(
     // Serialize catalog writes so a concurrent transaction cannot be attributed
     // to the wrong moderator while the before/after snapshots are collected.
     await tx.execute(sql`select pg_advisory_xact_lock(16841001)`);
-    const before = await captureCatalog(tx);
+    await captureCatalogBefore(tx);
     const result = await mutate(tx);
-    const after = await captureCatalog(tx);
-    const items = diffCatalog(before, after);
+    const items = await captureCatalogChanges(tx);
     if (items.length) {
       const [change] = await tx.insert(catalogChanges).values({ moderatorId, action, summary, revertsChangeId }).returning({ id: catalogChanges.id });
       await tx.insert(catalogChangeItems).values(items.map((item) => ({ changeId: change.id, ...item })));
@@ -61,7 +76,7 @@ export async function revertCatalogChange(changeId: string, moderatorId: string)
   if (!items.length) throw new Error("This legacy history entry has no restorable payload.");
 
   await auditedCatalogMutation(moderatorId, "revert", `Reverted: ${change.summary}`, async (tx) => {
-    const current = await captureCatalog(tx);
+    const current = await captureCatalogRows(tx, items);
     for (const item of items) {
       const row = current.get(item.tableName)?.get(item.rowKey) ?? null;
       if (!snapshotMatches(row, item.afterSnapshot)) throw new Error(`Cannot revert because ${item.tableName} ${item.rowKey} has changed since this edit.`);
@@ -76,50 +91,62 @@ export async function revertCatalogChange(changeId: string, moderatorId: string)
   }, changeId);
 }
 
-async function captureCatalog(tx: CatalogTransaction) {
-  const [nodes, pairs, rules, sourceRows, exampleRows, pairLinks, ruleLinks, aliases] = await Promise.all([
-    tx.select().from(lineageNodes),
-    tx.select().from(transitions),
-    tx.select().from(soundChanges),
-    tx.select().from(sources),
-    tx.select().from(examples),
-    tx.select().from(transitionSources),
-    tx.select().from(soundChangeSources),
-    tx.select().from(slugAliases),
-  ]);
-  return new Map<TableName, Map<string, SnapshotRow>>([
-    ["lineage_nodes", rowsByKey(nodes, (row) => row.id)],
-    ["transitions", rowsByKey(pairs, (row) => row.id)],
-    ["sound_changes", rowsByKey(rules, (row) => row.id)],
-    ["sources", rowsByKey(sourceRows, (row) => row.id)],
-    ["examples", rowsByKey(exampleRows, (row) => row.id)],
-    ["transition_sources", rowsByKey(pairLinks, (row) => `${row.transitionId}:${row.sourceId}`)],
-    ["sound_change_sources", rowsByKey(ruleLinks, (row) => `${row.soundChangeId}:${row.sourceId}`)],
-    ["slug_aliases", rowsByKey(aliases, (row) => row.id)],
-  ]);
+async function captureCatalogBefore(tx: CatalogTransaction): Promise<void> {
+  await tx.execute(sql`create temporary table catalog_audit_before on commit drop as ${catalogRowsSql}`);
 }
 
-function rowsByKey<T extends SnapshotRow>(rows: T[], key: (row: T) => string) {
-  return new Map(rows.map((row) => [key(row), row]));
+async function captureCatalogChanges(tx: CatalogTransaction): Promise<SnapshotItem[]> {
+  const rows = await tx.execute(sql`
+    with after_rows as (${catalogRowsSql})
+    select
+      coalesce(before_rows.table_name, after_rows.table_name) as "tableName",
+      coalesce(before_rows.row_key, after_rows.row_key) as "rowKey",
+      before_rows.snapshot as "beforeSnapshot",
+      after_rows.snapshot as "afterSnapshot"
+    from catalog_audit_before before_rows
+    full outer join after_rows using (table_name, row_key)
+    where before_rows.snapshot is distinct from after_rows.snapshot
+  `) as unknown as DatabaseSnapshotDelta[];
+  return rows.map(snapshotDeltaFromDatabase);
 }
 
-function diffCatalog(before: Awaited<ReturnType<typeof captureCatalog>>, after: Awaited<ReturnType<typeof captureCatalog>>): SnapshotItem[] {
-  const result: SnapshotItem[] = [];
-  for (const tableName of Object.keys(tableOrder) as TableName[]) {
-    const beforeRows = before.get(tableName)!;
-    const afterRows = after.get(tableName)!;
-    const keys = new Set([...beforeRows.keys(), ...afterRows.keys()]);
-    for (const rowKey of keys) {
-      const beforeRow = beforeRows.get(rowKey) ?? null;
-      const afterRow = afterRows.get(rowKey) ?? null;
-      if (sameSnapshot(beforeRow, afterRow)) continue;
-      if (beforeRow && afterRow) {
-        const keys = [...new Set([...Object.keys(beforeRow), ...Object.keys(afterRow)])].filter((key) => !sameSnapshot(beforeRow[key], afterRow[key]));
-        result.push({ tableName, rowKey, beforeSnapshot: pickFields(beforeRow, keys), afterSnapshot: pickFields(afterRow, keys) });
-      } else result.push({ tableName, rowKey, beforeSnapshot: beforeRow, afterSnapshot: afterRow });
-    }
+async function captureCatalogRows(tx: CatalogTransaction, items: SnapshotItem[]) {
+  const wanted = JSON.stringify(items.map(({ tableName, rowKey }) => ({ tableName, rowKey })));
+  const rows = await tx.execute(sql`
+    with catalog_rows as (${catalogRowsSql}),
+    wanted as (
+      select * from jsonb_to_recordset(${wanted}::jsonb) as requested("tableName" text, "rowKey" text)
+    )
+    select catalog_rows.table_name as "tableName", catalog_rows.row_key as "rowKey", catalog_rows.snapshot
+    from catalog_rows
+    inner join wanted on wanted."tableName" = catalog_rows.table_name and wanted."rowKey" = catalog_rows.row_key
+  `) as unknown as DatabaseSnapshotRow[];
+  const result = new Map<TableName, Map<string, SnapshotRow>>();
+  for (const row of rows) {
+    const tableRows = result.get(row.tableName) ?? new Map<string, SnapshotRow>();
+    tableRows.set(row.rowKey, snapshotFromDatabase(row.snapshot));
+    result.set(row.tableName, tableRows);
   }
   return result;
+}
+
+export function snapshotDeltaFromDatabase(delta: DatabaseSnapshotDelta): SnapshotItem {
+  const beforeSnapshot = delta.beforeSnapshot ? snapshotFromDatabase(delta.beforeSnapshot) : null;
+  const afterSnapshot = delta.afterSnapshot ? snapshotFromDatabase(delta.afterSnapshot) : null;
+  if (beforeSnapshot && afterSnapshot) {
+    const keys = [...new Set([...Object.keys(beforeSnapshot), ...Object.keys(afterSnapshot)])]
+      .filter((key) => !sameSnapshot(beforeSnapshot[key], afterSnapshot[key]));
+    return { tableName: delta.tableName, rowKey: delta.rowKey, beforeSnapshot: pickFields(beforeSnapshot, keys), afterSnapshot: pickFields(afterSnapshot, keys) };
+  }
+  return { tableName: delta.tableName, rowKey: delta.rowKey, beforeSnapshot, afterSnapshot };
+}
+
+export function snapshotFromDatabase(row: Record<string, unknown>): SnapshotRow {
+  return Object.fromEntries(Object.entries(row).map(([key, value]) => {
+    const applicationKey = key.replace(/_([a-z])/g, (_, letter: string) => letter.toUpperCase());
+    const applicationValue = ["createdAt", "updatedAt", "reviewedAt"].includes(applicationKey) && typeof value === "string" ? new Date(value) : value;
+    return [applicationKey, applicationValue];
+  }));
 }
 
 export function sameSnapshot(left: unknown, right: unknown): boolean {
