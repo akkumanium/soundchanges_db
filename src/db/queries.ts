@@ -1,5 +1,5 @@
 import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
-import { revalidateTag, unstable_cache } from "next/cache";
+import { unstable_cache, updateTag } from "next/cache";
 import { connection } from "next/server";
 import { db } from "./index";
 import {
@@ -137,7 +137,10 @@ export async function getCatalog(): Promise<Catalog> {
 }
 
 export function revalidateCatalog(): void {
-  revalidateTag(CATALOG_CACHE_TAG, "max");
+  // Catalog writes need read-your-own-writes semantics. Serving the stale value
+  // here leaves client editors holding IDs from before the save, so a second
+  // submission can mistake every newly-created row for another new row.
+  updateTag(CATALOG_CACHE_TAG);
 }
 
 export async function getTransitionBySlug(slug: string): Promise<CatalogTransition | undefined> {

@@ -10,7 +10,9 @@ export function EntryView({ entry, nodes = [], canEdit = false, reviewChanges = 
     <ol className="rule-list">{entry.rules.map((rule) => <RuleView key={rule.id} rule={rule} targets={ruleReviewTargets(rule, reviewChanges)} catalog={catalog} />)}
       {catalog && deletedRules.map(({ change, item, snapshot }) => <DeletedRule key={`${change.id}-${item.id}`} change={change} item={item} snapshot={snapshot} catalog={catalog} />)}
     </ol>
-    {canEdit && <PairEditor entry={entry} nodes={nodes} />}
+    {/* A save increments the pair revision. Remounting prevents controlled form
+        state (especially IDs assigned to new rules) from surviving that save. */}
+    {canEdit && <PairEditor key={`${entry.id}:${entry.revision}`} entry={entry} nodes={nodes} />}
   </article>;
 }
 
